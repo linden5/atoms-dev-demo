@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app import STEP, db, tasks, __version__
+from app.config import settings
 
 router = APIRouter()
 
@@ -54,6 +55,7 @@ async def health() -> dict:
         "version": __version__,
         "step": STEP,
         "engine": tasks.engine_name(),
+        "engine_mode": settings.engine_mode,
         "uptime_s": round(time.monotonic() - _STARTED_AT, 3),
         "python": platform.python_version(),
         "time": _now(),
