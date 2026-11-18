@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import db, models
-from app.config import settings
+from app.config import ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings
 from app.engine.base import Engine
 from app.engine.mock_engine import MockEngine
 
@@ -46,19 +46,34 @@ class ArtifactTooLarge(RuntimeError):
 
 
 def get_engine() -> Engine:
-    """引擎懒加载：MOCK 与真实引擎同契约，只有这里知道具体实现类。"""
+    """引擎懒加载：MOCK 与真实引擎同契约，只有这里知道具体实现类。
+
+    `MOCK_ENGINE` 三态（见 `app/config.py`）：
+    - `1`：强制 MOCK，用于演示兜底与本地回归；
+    - `0`：强制 MetaGPT，装不上就抛 RuntimeError（不静默降级，避免"以为在用真模型"）；
+    - 留空：auto，能导入 metagpt 就用真实引擎，否则降级 MOCK 并记一条 warning。
+    """
     global _engine
     if _engine is not None:
         return _engine
 
-    if settings.mock_engine:
+    if settings.engine_mode == ENGINE_MODE_MOCK:
         _engine = MockEngine()
-    else:
-        try:
-            from app.engine.metagpt_engine import MetaGPTEngine
-        except ImportError as exc:  # S4 才提供真实引擎
-            raise RuntimeError(f"MOCK_ENGINE=0，但真实引擎不可用：{exc}") from exc
+        return _engine
+
+    # 只在函数内导入：模块本身不依赖 metagpt，没装依赖的环境也能启动服务
+    from app.engine.metagpt_engine import MetaGPTEngine, metagpt_available
+
+    if settings.engine_mode == ENGINE_MODE_METAGPT:
         _engine = MetaGPTEngine()
+        return _engine
+
+    available, detail = metagpt_available()
+    if available:
+        _engine = MetaGPTEngine()
+    else:
+        log.warning("未检测到 MetaGPT（%s），自动降级为 MOCK 引擎", detail)
+        _engine = MockEngine()
     return _engine
 
 
@@ -160,10 +175,18 @@ async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path) -> No
 
 
 def _finish_success(task_id: str, workdir: Path) -> None:
+    """扫描产物 → 先落终态 → 再写产物元数据。
+
+    顺序不能反：先写产物再改状态时，若用户恰好在两者之间取消，会出现
+    "状态 cancelled 但 artifacts 已落库" 的不一致数据。先改状态则取消方一定赢，
+    收尾直接放弃写元数据（产物目录仍保留，便于排查）。
+    """
     result = scan_artifacts(workdir)
+    if not db.set_status(task_id, models.STATUS_SUCCEEDED, stage="checking"):
+        log.info("任务在收尾前已进入终态，跳过产物落库 id=%s", task_id)
+        return
     for rel, kind, size in result.files:
         db.add_artifact(task_id, rel, kind, size)
-    db.set_status(task_id, models.STATUS_SUCCEEDED, stage="checking")
     db.add_event(task_id, models.STATUS_SUCCEEDED)
     log.info("任务成功 id=%s 入口=%s 文件数=%d", task_id, result.entry, len(result.files))
 
