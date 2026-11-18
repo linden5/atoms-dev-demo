@@ -1,0 +1,15 @@
+# Atoms Demo 依赖清单，分两段：
+#   1) 基础段：S2 起需要（FastAPI / uvicorn），MOCK 引擎即可跑通全链路
+#   2) 引擎段：S4 起需要（MetaGPT），仅能在 Python 3.11 环境安装
+#
+# 安装基础段（S2 / S3，任意 Python >= 3.11）：
+#   uv pip install -r requirements.txt
+# 只装基础段而不装引擎段的原因：metagpt 依赖 aiohttp==3.8.6、faiss-cpu==1.7.4，
+# 这两个包没有 3.12+ 的 wheel，详见 docs/setup.md。
+
+# ---- 基础依赖（S2 起）----
+fastapi==0.163.2
+uvicorn[standard]==0.54.0
+
+# ---- 生成引擎（S4 起，Python 3.11 专用，取消注释后安装）----
+# metagpt==0.8.2
