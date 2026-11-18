@@ -1,0 +1,290 @@
+# 架构设计文档
+
+## 1. 背景与目标
+
+### 1.1 问题定义
+
+构建一个 Atoms Demo：用户用自然语言描述需求，系统由智能体驱动生成一个可运行的网页应用，并在浏览器中可视化预览；支持在已有结果上继续对话修改，所有任务、产物与版本持久化。
+
+### 1.2 交付约束
+
+| 约束 | 内容 | 对设计的影响 |
+|---|---|---|
+| 时间 | 48h 窗口内投入 6–8h | 必须砍掉一切非必要组件，优先跑通主链路 |
+| 成本 | 极低预算 | 单台 2C2G 轻量服务器，按量付费 LLM |
+| 交付物 | public 可访问链接 + public GitHub | 部署与仓库必须一次成功，不依赖域名 |
+| 硬性要求 | 真实交互（非静态）、数据持久化 | 必须服务端落库，不能只靠浏览器 |
+| 时间点 | 截止前需留出文档与兜底时间 | 架构要允许"预置演示数据" |
+
+### 1.3 范围
+
+**做**：需求 → 生成 → 预览 → 迭代修改 → 版本历史；任务状态可观测；产物可下载。
+
+**不做**：用户注册与鉴权、计费、SEO、多租户隔离、生成应用的独立子域托管、Atoms 商业化能力。
+
+## 2. 总体架构
+
+```
+                         ┌────────────────────────────┐
+   Browser  ────────────►│  web/  单页前端（静态文件）  │
+      ▲                  │  输入框 / 任务列表 / 预览区  │
+      │ 轮询 task 状态    └────────────┬───────────────┘
+      │                              │ HTTP (JSON)
+      │                              ▼
+      │                  ┌────────────────────────────┐
+      └──────────────────│  FastAPI  app/              │
+                         │  api.py   路由与校验         │
+                         │  tasks.py 任务编排与状态机    │
+                         │  db.py    SQLite 访问        │
+                         └───────┬────────────┬────────┘
+                                 │ 调度        │ 读写
+                                 ▼             ▼
+              ┌──────────────────────┐   ┌──────────────┐
+              │ engine/  引擎层（可替换）│   │ SQLite       │
+              │ metagpt_engine        │   │ tasks        │
+              │ mock_engine           │   │ artifacts    │
+              └──────────┬───────────┘   └──────────────┘
+                         │ 生成并落盘
+                         ▼
+              ┌──────────────────────┐
+              │ workspace/{task_id}/  │  生成产物（HTML/CSS/JS）
+              └──────────────────────┘
+```
+
+分层职责：
+
+| 层 | 职责 | 不做什么 |
+|---|---|---|
+| 前端 | 输入、状态展示、预览渲染、版本切换 | 不直接调用 LLM，不存储业务数据 |
+| API 层 | 校验、任务入队、查询、产物下发 | 不包含业务推理逻辑 |
+| 编排层 | 状态机、并发控制、超时、取消、事件记录 | 不感知具体引擎实现 |
+| 引擎层 | 调用 LLM / MetaGPT，产出文件到 workspace | 不写数据库，不拼 HTTP 响应 |
+| 存储层 | 任务、产物元数据、版本链 | 不存产物正文（正文留在磁盘） |
+
+## 3. 核心流程
+
+```
+用户提交需求
+   │
+   ├─► POST /api/generate  ── 校验 → 建 task(status=pending) → 入队 → 202 {task_id}
+   │                                                        (返回耗时 < 200ms)
+   ├─► worker 取任务 → status=running, stage=planning → emit 事件
+   │        │
+   │        ├─ stage=coding   （调用引擎，产物写入 workspace/{task_id}/）
+   │        └─ stage=checking
+   │
+   ├─► 引擎返回 → scan_artifacts(dir) → 写 artifacts 表 → status=succeeded
+   │
+   └─► 前端轮询 GET /api/tasks/{id}
+            ├─ running  → 渲染阶段进度
+            ├─ succeeded→ 加载 /api/tasks/{id}/preview 到 iframe
+            └─ failed   → 展示 error，保留"重试"入口
+```
+
+失败与超时路径：
+
+- 引擎抛异常 → `status=failed`，`error` 存摘要（截断 500 字），产物目录保留便于排查
+- 超过 `TASK_TIMEOUT=600s` → 取消 asyncio 任务 → `status=failed, error=timeout`
+- 用户主动取消 → `status=cancelled`，不回滚已生成文件
+- 服务重启 → 启动时把残留 `running` 任务标记为 `failed, error=interrupted by restart`，避免永久 pending
+
+## 4. 模块设计
+
+### 4.1 API 层
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health` | 存活与版本信息 |
+| POST | `/api/generate` | 创建任务，body: `{prompt, parent_id?}`，返回 `{task_id}` |
+| GET | `/api/tasks` | 任务列表，支持 `limit`、`offset` |
+| GET | `/api/tasks/{id}` | 任务详情：状态、阶段、错误、产物列表、parent_id |
+| POST | `/api/tasks/{id}/cancel` | 取消运行中的任务 |
+| GET | `/api/tasks/{id}/preview` | 返回产物主 HTML（`text/html`，带 CSP） |
+| GET | `/api/tasks/{id}/files/{path}` | 返回产物中的静态文件（路径白名单校验） |
+| GET | `/api/tasks/{id}/events` | 事件流（SSE，可选实现；未实现时前端退回轮询） |
+
+响应示例：
+
+```json
+{
+  "id": "t_20261118_ab12",
+  "status": "running",
+  "stage": "coding",
+  "prompt": "做一个番茄钟，单文件 HTML",
+  "parent_id": null,
+  "error": null,
+  "artifacts": [{"path": "index.html", "kind": "html", "size": 4213}],
+  "created_at": "2026-11-18T10:00:00Z",
+  "updated_at": "2026-11-18T10:03:12Z"
+}
+```
+
+### 4.2 编排层
+
+- **状态机**：`pending → running → succeeded | failed | cancelled`，终态不可回退。
+- **并发**：单进程 `asyncio.Semaphore(MAX_CONCURRENCY)`，默认 1。理由：2G 内存下同时跑两次 MetaGPT 极易 OOM，且 LLM 费用翻倍。排队任务保持 `pending` 并可被取消。
+- **超时**：`asyncio.wait_for(..., TASK_TIMEOUT)`，默认 600s。
+- **事件**：阶段变化写 `task_events` 表（同时供 SSE 与排障使用），前端至少能拿到"最后一个 stage"。
+- **重启恢复**：启动钩子里做一次 `running → failed(interrupted)` 的清理。
+
+### 4.3 引擎层（关键抽象）
+
+```python
+class Engine(Protocol):
+    name: str
+    async def run(
+        self,
+        task_id: str,
+        prompt: str,
+        workdir: Path,
+        emit: Callable[[str], Awaitable[None]],   # 上报阶段
+    ) -> None: ...
+```
+
+契约约定：
+
+1. 引擎**只负责把文件写进 `workdir`**，不改数据库、不返回 HTML 字符串；
+2. 引擎必须可被取消（配合超时/取消按钮，内部用 `asyncio` 且不吞 `CancelledError`）；
+3. 阶段上报是"尽力而为"，缺失不影响任务成功判定；
+4. 产物结构由 `scan_artifacts()` 统一解释，引擎不承诺文件名。
+
+两个实现：
+
+| 实现 | 用途 | 说明 |
+|---|---|---|
+| `metagpt_engine` | 真实生成 | 调用 MetaGPT（单角色，非完整 Team），产物在 `workspace/{task_id}/` |
+| `mock_engine` | 调试与演示兜底 | 写入固定 `index.html`，`asyncio.sleep` 模拟阶段；`MOCK_ENGINE=1` 启用 |
+
+选择单角色而非 `Team` 全流程：全流程不可控且更慢，Web 场景需要的是"一次可复现的生成"，不是多角色编排本身。多角色观感通过前端阶段卡片呈现。
+
+### 4.4 产物管理
+
+- 目录：`workspace/{task_id}/`，任务创建时即创建，失败也保留。
+- 扫描规则（`scan_artifacts`）：
+  1. 递归收集文件，跳过隐藏目录、`__pycache__`、超过 5MB 的文件；
+  2. 主入口优先级：`index.html` → 任意 `*.html`（取路径最短者）→ 无则任务判为 `failed, error=no previewable artifact`；
+  3. 记录 `path / kind(html|css|js|image|other) / size`。
+- 安全：
+  - `/files/{path}` 必须 `Path.resolve()` 后校验前缀仍在任务目录内，阻断路径穿越；
+  - 预览响应带 CSP：`default-src 'self' 'unsafe-inline' data: blob:`，禁止生成物外联任意脚本；
+  - iframe 使用 `sandbox="allow-scripts"`，**不加** `allow-same-origin`，隔离生成代码与主站。
+
+### 4.5 持久化
+
+SQLite 单文件 `data/app.db`，`PRAGMA journal_mode=WAL`。所有写入走单一连接封装，避免并发写锁。
+
+```sql
+CREATE TABLE tasks (
+  id          TEXT PRIMARY KEY,
+  parent_id   TEXT REFERENCES tasks(id),
+  prompt      TEXT NOT NULL,
+  status      TEXT NOT NULL,          -- pending|running|succeeded|failed|cancelled
+  stage       TEXT,                   -- planning|coding|checking
+  error       TEXT,
+  workdir     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX idx_tasks_status ON tasks(status, created_at DESC);
+
+CREATE TABLE artifacts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  path       TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_artifacts_task ON artifacts(task_id);
+
+CREATE TABLE task_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  message    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+```
+
+版本链用 `parent_id` 表达：一次"继续修改"= 新建任务并指向父任务，不复制旧产物。回滚 = 前端把某个历史版本设为当前预览目标（不改数据），需要"设为当前"时在 `tasks` 之外不动，由前端记住 `current_task_id`。
+
+### 4.6 前端
+
+单页静态文件，无构建步骤（避免引入 node 工具链）：
+
+- 三块区域：需求输入 + 提交、任务/版本列表、预览 iframe；
+- 状态刷新：默认 1.5s 轮询，进入终态后停止；`stage` 变化时更新阶段卡片；
+- 预览：`iframe.src = /api/tasks/{id}/preview`，切换版本时替换 src；
+- 失败态：展示 `error` 摘要与"重试"按钮（重试 = 以同一 prompt 新建任务）。
+
+## 5. 关键技术决策记录
+
+| 决策 | 备选 | 结论 | 理由 | 代价 |
+|---|---|---|---|---|
+| 生成引擎 | MetaGPT / 自研三次 LLM 调用 | MetaGPT（单角色） | 与 Atoms 同源，架构叙事可对标；开源版已具备代码生成能力 | 单次 5–10 分钟，需后台任务 + 超时 |
+| 部署形态 | 轻量服务器 / CloudBase / Render / Railway | 轻量服务器（Ubuntu 24.04，2C2G） | 磁盘持久、不休眠、可自由装依赖；免费 Serverless 有文件系统不持久或休眠问题 | 需自理 systemd 与安全组 |
+| Python 运行时 | 系统 3.12 / 装 3.11 | uv 装独立 3.11 | MetaGPT 要求 `<3.12`，降级系统 Python 会破坏包管理 | 多一层工具 |
+| LLM 提供方 | 阿里云百炼免费额度 / 腾讯 TokenHub / DeepSeek 按量 | DeepSeek 按量付费 | 无需审批与地域限制、OpenAI 协议兼容、单价极低 | 需预充 10 元，无免费额度 |
+| 数据库 | SQLite / Postgres | SQLite | 零运维、单进程足够、标准库自带 | 并发写弱，无法水平扩展 |
+| 任务通知 | 轮询 / SSE / WebSocket | 轮询（SSE 可选） | 实现成本最低、断网自愈；生成本身分钟级，实时性收益低 | 状态可见性略差 |
+| 预览隔离 | 同源 iframe sandbox / 独立子域 | 同源 iframe + `sandbox` + CSP | 免域名、免备案、实现快 | 存在 XSS 面，靠 CSP 与 sandbox 兜底 |
+| 公网访问 | 域名 + HTTPS / 公网 IP + 非标端口 | IP + `:8000` | 国内服务器绑域名需 ICP 备案，时间不允许；80/443 未备案会被拦 | 无 HTTPS，演示地址略粗糙 |
+| 进程模型 | 单 worker / 多 worker | 单 worker（uvicorn 默认） | 任务队列与信号量在进程内，多 worker 会导致状态不一致 | 无法水平扩展 |
+| 代码托管 | 服务器直连 GitHub / 本地推送 | 本地 `git push` | 避免服务器出网代理、Token 泄露等风险 | 需手动同步到服务器 |
+
+## 6. 非功能性设计
+
+**性能目标**
+
+| 指标 | 目标 |
+|---|---|
+| `POST /api/generate` 响应 | < 200ms |
+| mock 模式端到端（含预览） | < 5s |
+| 真实生成 | 5–10 分钟，硬超时 600s |
+| 并发任务数 | 1（`MAX_CONCURRENCY` 可调） |
+| 单任务产物上限 | 50MB |
+
+**成本控制**：单任务一次生成约数百到数千 token 级别调用，按量计费；演示前预生成 2–3 条结果写库，现场命中缓存，避免重复消耗与等待。
+
+**可靠性**：
+- 降级：`MOCK_ENGINE=1` 可在 LLM 不可用时保证链路可演示；
+- 重试：任务级手动重试，不做自动重试（避免费用翻倍）；
+- 幂等：同一 `prompt` 不做去重，前端"重试"显式创建新任务。
+
+**安全**：
+- LLM Key 只存在于服务端 `~/.metagpt/config2.yaml`，绝不下发前端；
+- 产物目录访问做路径前缀校验；
+- 预览 iframe 无 `allow-same-origin`，生成代码无法读取主站 Cookie；
+- 不提供任何文件上传与任意路径读取能力。
+
+## 7. 风险与对策
+
+| 风险 | 影响 | 对策 |
+|---|---|---|
+| MetaGPT 产物结构变化 | 找不到入口 HTML，预览空白 | `scan_artifacts` 多级回退 + 明确失败态，不让前端白屏 |
+| 生成失败/超时 | 演示中断 | 预置成功任务 + `MOCK_ENGINE` 兜底 + 重试入口 |
+| 2C2G 内存不足 | 进程被杀 | 并发 1、加 swap、限制产物大小 |
+| 环境装不上（3.12 / faiss） | 无法启动 | 依次降级：faiss 单独重试 → 换 3.10 → 重装 Ubuntu 22.04 → 回退 `MOCK_ENGINE=1` 交付 |
+| 端口未放行 | 打不开页面 | 安全组 + `ss -ltnp` 双重确认；验收前从外网无痕验证 |
+| 生成代码外联/恶意脚本 | 演示环境被破坏 | CSP + iframe sandbox，限制外链 |
+
+## 8. 演进路线（按优先级）
+
+1. **P0 版本历史与回滚**：`parent_id` 链 + 前端版本列表（已在数据模型中预留）
+2. **P1 生成时延**：流式输出阶段与代码片段，把"等待"变成"可见进度"
+3. **P2 产物质量**：生成后自动做一次结构校验（可运行性检查、缺失资源检测）
+4. **P3 多 Agent 可视化**：把 MetaGPT 的角色分工映射为时间轴 UI
+5. **P4 模板市场 / 子域隔离部署**：需要域名与备案，超出本次范围
+
+## 9. 部署拓扑
+
+```
+Internet ──► 云厂商安全组(TCP:8000) ──► 轻量服务器 Ubuntu 24.04
+                                        ├─ systemd: atoms.service
+                                        ├─ uvicorn app.main:app (0.0.0.0:8000, 单 worker)
+                                        ├─ .venv (uv, Python 3.11)
+                                        ├─ data/app.db (SQLite, WAL)
+                                        └─ workspace/{task_id}/ (产物)
+```
+
+环境搭建细节见 [setup.md](setup.md)（Linux）与 [setup-windows.md](setup-windows.md)（Windows）。
