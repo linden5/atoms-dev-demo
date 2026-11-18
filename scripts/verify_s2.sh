@@ -69,9 +69,22 @@ printf '\nS2 验收 · %s\n\n' "$BASE_URL"
 # 1. 后端：/health 是这一步新增的唯一接口
 expect_status "/health 返回 200" "${BASE_URL}/health" "200"
 expect_contains "/health 报告 status=ok" "${BASE_URL}/health" '"status":"ok"'
-expect_contains "/health 报告当前步骤 s2" "${BASE_URL}/health" '"step":"s2"'
 expect_contains "/health 带版本号" "${BASE_URL}/health" '"version"'
 expect_contains "/health 带运行时长" "${BASE_URL}/health" '"uptime_s"'
+
+# 步骤号只做"不低于 s2"的判断：后续步骤复用同一个服务，写死 "s2" 会让 S4 起的回归误报
+health_step="$(fetch "${BASE_URL}/health" | grep -o '"step":"s[0-9]*"' | head -n 1 | cut -d'"' -f4)"
+health_step_num="${health_step#s}"
+case "$health_step_num" in
+  '' | *[!0-9]*) no "步骤号无法解析（实际：${health_step:-空}）" ;;
+  *)
+    if [ "$health_step_num" -ge 2 ]; then
+      ok "当前步骤不低于 s2（实际：${health_step}）"
+    else
+      no "当前步骤是 ${health_step}，S2 接口尚未上线"
+    fi
+    ;;
+esac
 
 # 2. 证明是 ASGI 服务而不是 http.server：HEAD 可用，且成功响应的头里应有 uvicorn
 head_code="$(curl -s -o /dev/null -w '%{http_code}' -I --max-time 5 "${BASE_URL}/health" 2>/dev/null || true)"
@@ -96,8 +109,9 @@ expect_status "样式表可访问" "${BASE_URL}/styles.css" "200"
 expect_status "脚本可访问" "${BASE_URL}/app.js" "200"
 expect_contains "前端已接入 /health 探测" "${BASE_URL}/app.js" "probeHealth"
 
-# 4. 路由隔离：未实现的接口返回 404，而不是被静态托管吞成 200
-expect_status "未实现接口返回 404" "${BASE_URL}/api/tasks" "404"
+# 4. 路由隔离：不存在的接口返回 404，而不是被静态托管吞成 200
+#    刻意用一个永不实现的路径：S3 起 /api/tasks 已存在，不能再用它证明路由隔离
+expect_status "不存在的接口返回 404" "${BASE_URL}/api/__not_implemented__" "404"
 
 printf '\n结果：%d 通过 / %d 失败\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
