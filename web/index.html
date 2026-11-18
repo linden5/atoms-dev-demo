@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atoms Demo · AI 应用生成工作台</title>
+  <meta name="description" content="输入自然语言需求，由智能体生成可运行的网页应用，并在沙箱中实时预览。" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__left">
+      <span class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Atoms Demo</span>
+      </span>
+      <span class="status" id="status-indicator">
+        <span class="status__dot" aria-hidden="true"></span>
+        <span class="status__text">静态演示 · S1</span>
+      </span>
+    </div>
+
+    <div class="topbar__center">
+      <span class="chip">版本 <b id="version-tag">s1</b></span>
+      <span class="chip">任务 <b id="task-count">0</b></span>
+      <span class="chip chip--muted" id="engine-chip">引擎 MOCK</span>
+    </div>
+
+    <div class="topbar__right">
+      <button class="icon-btn" id="help-btn" type="button" aria-expanded="false" aria-controls="help-panel">
+        帮助
+      </button>
+    </div>
+  </header>
+
+  <div class="help-panel" id="help-panel" hidden>
+    <h2>这是 S1 静态版本</h2>
+    <p>页面数据全部为内置演示数据，没有后端。点击任务可切换预览，提交需求会在前端模拟一次生成流程，用来验证交互与阶段展示。</p>
+    <p>S2 起由 FastAPI 接管，S3 接入 SQLite 与真实接口，S4 接入 MetaGPT 引擎。</p>
+    <p class="help-panel__meta">当前步骤：S1 · 静态单页与演示数据</p>
+  </div>
+
+  <main class="workspace">
+    <aside class="panel" aria-label="需求与任务">
+      <section class="block">
+        <div class="block__head">
+          <h2 class="block__title">需求</h2>
+          <span class="block__hint">Ctrl / ⌘ + Enter 提交</span>
+        </div>
+        <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
+        <textarea
+          id="requirement-input"
+          class="editor"
+          rows="4"
+          spellcheck="false"
+          placeholder="例如：做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题"
+        ></textarea>
+        <div class="examples" id="example-list">
+          <button class="tag" type="button" data-prompt="做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题">番茄钟</button>
+          <button class="tag" type="button" data-prompt="做一个待办清单，可以添加、勾选和删除，显示剩余数量">待办清单</button>
+          <button class="tag" type="button" data-prompt="做一个极简记账面板，记录收支并显示结余">记账面板</button>
+        </div>
+        <button class="primary-btn" id="submit-btn" type="button">
+          <span class="primary-btn__label">生成应用</span>
+          <span class="primary-btn__hint" aria-hidden="true">↵</span>
+        </button>
+      </section>
+
+      <section class="block">
+        <div class="block__head">
+          <h2 class="block__title">阶段</h2>
+          <span class="block__hint" id="stage-hint">等待提交</span>
+        </div>
+        <ol class="stages" id="stage-list">
+          <li class="stage" data-stage="planning">
+            <span class="stage__dot" aria-hidden="true"></span>
+            <span class="stage__body">
+              <span class="stage__name">需求规划</span>
+              <span class="stage__desc">拆解意图与页面结构</span>
+            </span>
+            <span class="stage__time"></span>
+          </li>
+          <li class="stage" data-stage="coding">
+            <span class="stage__dot" aria-hidden="true"></span>
+            <span class="stage__body">
+              <span class="stage__name">编码生成</span>
+              <span class="stage__desc">产出可运行的单页应用</span>
+            </span>
+            <span class="stage__time"></span>
+          </li>
+          <li class="stage" data-stage="checking">
+            <span class="stage__dot" aria-hidden="true"></span>
+            <span class="stage__body">
+              <span class="stage__name">自检与落库</span>
+              <span class="stage__desc">校验产物并持久化</span>
+            </span>
+            <span class="stage__time"></span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="block block--grow">
+        <div class="block__head">
+          <h2 class="block__title">任务与版本</h2>
+          <span class="block__hint" id="task-hint">点击切换预览</span>
+        </div>
+        <ul class="tasks" id="task-list"></ul>
+      </section>
+    </aside>
+
+    <section class="preview" aria-label="预览">
+      <div class="preview__toolbar">
+        <div class="toolbar__group">
+          <button class="icon-btn" id="refresh-btn" type="button" title="刷新预览">刷新</button>
+          <button class="icon-btn" id="popout-btn" type="button" title="新窗口打开">新窗口</button>
+        </div>
+        <div class="toolbar__group" id="width-group" role="group" aria-label="设备宽度">
+          <button class="width-btn" type="button" data-width="375">375</button>
+          <button class="width-btn" type="button" data-width="768">768</button>
+          <button class="width-btn" type="button" data-width="1000">1000</button>
+          <button class="width-btn is-active" type="button" data-width="100">自适应</button>
+        </div>
+        <div class="toolbar__group toolbar__group--meta">
+          <span class="preview__meta" id="preview-meta">未选择任务</span>
+        </div>
+      </div>
+
+      <div class="preview__stage">
+        <div class="progress-bar" id="progress-bar" aria-hidden="true"></div>
+
+        <div class="error-banner" id="error-banner" hidden>
+          <span class="error-banner__text" id="error-text"></span>
+          <button class="ghost-btn" id="retry-btn" type="button">重试</button>
+        </div>
+
+        <div class="canvas" id="preview-canvas" data-width="100">
+          <iframe
+            id="preview-frame"
+            class="canvas__frame"
+            title="生成应用预览"
+            sandbox="allow-scripts"
+            referrerpolicy="no-referrer"
+          ></iframe>
+
+          <div class="empty" id="empty-state">
+            <div class="empty__card">
+              <span class="empty__mark" aria-hidden="true"></span>
+              <h3>还没有选中的任务</h3>
+              <p>从左侧选择一条演示任务，或在需求框里描述你想生成的应用。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <noscript>
+    <p class="noscript">该页面需要启用 JavaScript 才能交互。</p>
+  </noscript>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
