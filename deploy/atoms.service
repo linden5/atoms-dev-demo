@@ -1,0 +1,18 @@
+; S1 版本：仅提供静态文件服务
+; S2 起把 ExecStart 换成 uvicorn，其余保持不变
+[Unit]
+Description=Atoms Demo
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/atoms-dev-demo
+ExecStart=/usr/bin/python3 -m http.server 8000 --bind 0.0.0.0 --directory web
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
