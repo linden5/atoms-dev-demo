@@ -10,6 +10,9 @@ logs/
 .env
 .env.local
 
+# 验收脚本的本地地址配置（模板见 deploy/verify.env.example）
+deploy/verify.env
+
 .DS_Store
 Thumbs.db
 .idea/
