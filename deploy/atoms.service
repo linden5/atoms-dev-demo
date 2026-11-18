@@ -9,6 +9,8 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/atoms-dev-demo
 Environment=PYTHONUNBUFFERED=1
+; S3 默认用 MOCK 引擎（不依赖 LLM）；S4 接入 MetaGPT 后改成 0
+Environment=MOCK_ENGINE=1
 ExecStart=/home/ubuntu/atoms-dev-demo/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 Restart=always
 RestartSec=2
