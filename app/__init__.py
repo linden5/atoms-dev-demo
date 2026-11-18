@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # 当前交付步骤，用于 /health 与前端顶栏展示
-STEP = "s3"
+STEP = "s4"

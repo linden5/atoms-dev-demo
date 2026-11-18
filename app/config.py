@@ -32,6 +32,12 @@ def _int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+ENGINE_MODE_AUTO = "auto"
+ENGINE_MODE_MOCK = "mock"
+ENGINE_MODE_METAGPT = "metagpt"
+ENGINE_MODES = (ENGINE_MODE_AUTO, ENGINE_MODE_MOCK, ENGINE_MODE_METAGPT)
+
+
 @dataclass(frozen=True)
 class Settings:
     """一次性从环境变量解析出的只读配置。"""
@@ -41,15 +47,28 @@ class Settings:
     workspace_dir: Path
     log_dir: Path
     db_path: Path
-    mock_engine: bool
+    engine_mode: str
     task_timeout: int
     max_concurrency: int
     max_artifact_bytes: int
     max_single_file_bytes: int
 
     @property
-    def engine_name(self) -> str:
-        return "mock" if self.mock_engine else "metagpt"
+    def mock_engine(self) -> bool:
+        """显式指定 MOCK 时为 True；auto 交给引擎选择逻辑判断。"""
+        return self.engine_mode == ENGINE_MODE_MOCK
+
+
+def _engine_mode() -> str:
+    """`MOCK_ENGINE` 三态：未设置=auto，1=强制 mock，0=强制 metagpt。
+
+    auto 的意义：S4 之后交付物既能在装了 MetaGPT 的服务器上真实生成，
+    也能在没有依赖/没有额度的机器上直接跑起来，不需要改部署配置。
+    """
+    raw = os.getenv("MOCK_ENGINE")
+    if raw is None or raw.strip() == "":
+        return ENGINE_MODE_AUTO
+    return ENGINE_MODE_MOCK if raw.strip().lower() in TRUTHY else ENGINE_MODE_METAGPT
 
 
 def load_settings() -> Settings:
@@ -61,8 +80,7 @@ def load_settings() -> Settings:
         workspace_dir=workspace_dir,
         log_dir=BASE_DIR / "logs",
         db_path=data_dir / "app.db",
-        # S3 还没有真实引擎，默认走 MOCK；S4 提供 metagpt 后把默认值改为 False
-        mock_engine=_flag("MOCK_ENGINE", True),
+        engine_mode=_engine_mode(),
         task_timeout=_int("TASK_TIMEOUT", 600),
         max_concurrency=_int("MAX_CONCURRENCY", 1),
         max_artifact_bytes=_int("MAX_ARTIFACT_BYTES", 50 * 1024 * 1024),
