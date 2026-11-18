@@ -620,6 +620,38 @@ body {
   text-align: center;
 }
 
+/* ---------- 预览加载态 ---------- */
+
+.canvas__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: inherit;
+  background: rgba(11, 15, 20, 0.76);
+  color: var(--text-1);
+  font-size: 12.5px;
+  backdrop-filter: blur(2px);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent-1);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ---------- 版本链与继续修改 ---------- */
 
 .modify-hint {

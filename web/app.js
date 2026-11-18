@@ -46,6 +46,7 @@
     taskHint: document.getElementById('task-hint'),
     frame: document.getElementById('preview-frame'),
     canvas: document.getElementById('preview-canvas'),
+    loading: document.getElementById('preview-loading'),
     empty: document.getElementById('empty-state'),
     emptyTitle: document.querySelector('#empty-state h3'),
     emptyText: document.querySelector('#empty-state p'),
@@ -396,11 +397,32 @@
     return '/api/tasks/' + encodeURIComponent(task.id) + '/files/' + encoded;
   }
 
+  const LOADING_TIMEOUT = 15000;
+  let loadingTimer = null;
+
+  function showLoading() {
+    if (!el.loading) return;
+    el.loading.hidden = false;
+    window.clearTimeout(loadingTimer);
+    // iframe 的 load 事件在 404 时也会触发，所以超时只兜"一直没加载完"的情况
+    loadingTimer = window.setTimeout(function () {
+      hideLoading();
+      showError('预览加载超时，可点击「刷新」或换个版本重试');
+    }, LOADING_TIMEOUT);
+  }
+
+  function hideLoading() {
+    if (el.loading) el.loading.hidden = true;
+    window.clearTimeout(loadingTimer);
+    loadingTimer = null;
+  }
+
   function renderPreview(animate) {
     const task = state.detail;
     const url = previewUrl(task);
 
     if (!url) {
+      hideLoading();
       el.frame.removeAttribute('src');
       el.frame.setAttribute('src', 'about:blank');
       el.empty.hidden = false;
@@ -426,8 +448,11 @@
     }
 
     el.empty.hidden = true;
-    const target = animate ? url + '?t=' + Date.now() : url;
-    el.frame.setAttribute('src', target);
+    // src 没变化时浏览器不会重新触发 load 事件，此时既不该显示加载层，也不必重设 src
+    if (animate || el.frame.getAttribute('src') !== url) {
+      showLoading();
+      el.frame.setAttribute('src', animate ? url + '?t=' + Date.now() : url);
+    }
     el.meta.textContent = task.id + ' · ' + fmtTime(task.created_at);
 
     if (animate) {
@@ -656,6 +681,9 @@
     el.refresh.addEventListener('click', function () {
       renderPreview(true);
     });
+
+    // iframe 完成加载（含 404 的兜底页）就收起加载层，避免它常驻挡住预览
+    el.frame.addEventListener('load', hideLoading);
 
     el.popout.addEventListener('click', function () {
       const url = previewUrl(state.detail);
