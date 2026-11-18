@@ -115,11 +115,19 @@ case "$mode" in
   *) no "缺少 engine_mode 字段（实际：${mode:-空}）" ;;
 esac
 
-if printf '%s' "$health" | grep -qF '"version":"0.4'; then
-  ok "版本号已推进到 0.4.x"
-else
-  info "版本号不是 0.4.x（当前：$(json_field "$health" version)）"
-fi
+# 版本号按小版本比较：后续步骤会继续 +0.1，写死 0.4 会让 S5 起的回归变成噪音
+app_version="$(json_field "$health" version)"
+app_minor="$(printf '%s' "$app_version" | cut -d. -f2)"
+case "$app_minor" in
+  '' | *[!0-9]*) no "版本号无法解析（${app_version:-空}）" ;;
+  *)
+    if [ "$app_minor" -ge 4 ]; then
+      ok "版本号不低于 0.4（实际：${app_version}）"
+    else
+      no "版本号是 ${app_version}，S4 的引擎改动尚未上线"
+    fi
+    ;;
+esac
 
 # ---------- 2. 回归：S3 主链路在 S4 仍然可用 ----------
 created="$(post_generate '{"prompt":"S4 验收：回归 S3 主链路"}')"
