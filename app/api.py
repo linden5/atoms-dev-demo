@@ -124,6 +124,26 @@ async def task_detail(task_id: str) -> dict:
     return payload
 
 
+@router.get("/api/tasks/{task_id}/versions", tags=["tasks"], summary="版本链")
+async def task_versions(task_id: str) -> dict:
+    """返回该任务所在版本树的全部版本（按创建时间升序，v1 最早）。
+
+    版本链用 `parent_id` 表达，没有独立表；同一版本被修改两次会形成分支，
+    这里按广度优先 + 时间排序拍平，前端用 v1…vN 展示。
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    root_id = db.root_of(task_id)
+    versions = db.list_versions(root_id)
+    return {
+        "root_id": root_id,
+        "current_id": task_id,
+        "total": len(versions),
+        "versions": [version.summary() for version in versions],
+    }
+
+
 @router.post("/api/tasks/{task_id}/cancel", tags=["tasks"], summary="取消任务")
 async def cancel_task(task_id: str) -> dict:
     task = await tasks.cancel(task_id)
