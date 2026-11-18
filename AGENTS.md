@@ -61,7 +61,9 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 
 | 步骤 | 内容 | 状态 |
 |---|---|---|
-| S1 | 静态单页 + 演示数据 | 已完成，未提交 |
-| S2 | FastAPI：`/health` + 静态托管 | 未开始 |
+| S1 | 静态单页 + 演示数据 | 已完成，tag `s1` |
+| S2 | FastAPI：`/health` + 静态托管 | 已完成，tag `s2` |
+| S3 | 任务 CRUD + SQLite + MOCK 引擎 | 已完成，tag `s3` |
+| S4 | 接入 MetaGPT 引擎（与 MOCK 可切换） | 未开始 |
 
 详见 [docs/roadmap.md](docs/roadmap.md)。
