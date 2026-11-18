@@ -66,6 +66,8 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 | S3 | 任务 CRUD + SQLite + MOCK 引擎 | 已完成，tag `s3` |
 | S4 | 接入 MetaGPT 引擎（与 MOCK 可切换） | 已完成，tag `s4`；真实生成待装 3.11 + metagpt 验证 |
 | S5 | 继续修改 + 版本历史（parent 链） | 已完成，tag `s5` |
-| S6 | 加固、交付文档与全量回归 | 未开始 |
+| S6 | 加固、交付文档与全量回归 | 已完成，tag `s6` / `v1.0` |
+
+后续工作看 `docs/delivery.md` 第 7 节（P0：真实 MetaGPT 生成跑通与失败可视化）。
 
 详见 [docs/roadmap.md](docs/roadmap.md)。
