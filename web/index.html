@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Atoms Demo · AI 应用生成工作台</title>
   <meta name="description" content="输入自然语言需求，由智能体生成可运行的网页应用，并在沙箱中实时预览。" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0f14'/%3E%3Cpath d='M16 7l7 4v9l-7 4-7-4v-9z' fill='none' stroke='%236366f1' stroke-width='2'/%3E%3Ccircle cx='16' cy='15.5' r='2.6' fill='%2322d3ee'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -21,7 +22,7 @@
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s2</b></span>
+      <span class="chip">版本 <b id="version-tag">s3</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
       <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
@@ -34,10 +35,11 @@
   </header>
 
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S2 版本</h2>
-    <p>服务已由 FastAPI 接管：顶栏状态灯读的是 `/health` 的真实返回，页面内容仍是内置演示数据。</p>
-    <p>S3 接入 SQLite 与真实任务接口，S4 接入 MetaGPT 引擎。当前提交需求仍是前端模拟，刷新会重置。</p>
-    <p class="help-panel__meta">当前步骤：S2 · FastAPI 接管（/health + 静态托管）</p>
+    <h2>这是 S3 版本</h2>
+    <p>提交需求会调用 <code>POST /api/generate</code> 入队并立刻返回，前端每 1.5s 轮询任务详情，阶段卡片随 <code>stage</code> 依次点亮。</p>
+    <p>任务与产物已落 SQLite（<code>data/app.db</code>），刷新或重启进程都不丢；产物由 MOCK 引擎写入 <code>workspace/&lt;task_id&gt;/</code>，在右侧沙箱中预览。</p>
+    <p>S4 接入 MetaGPT 真实生成，S5 支持在已有结果上继续修改并回溯版本。</p>
+    <p class="help-panel__meta">当前步骤：S3 · 任务 CRUD + SQLite + MOCK 引擎</p>
   </div>
 
   <main class="workspace">
@@ -69,7 +71,10 @@
       <section class="block">
         <div class="block__head">
           <h2 class="block__title">阶段</h2>
-          <span class="block__hint" id="stage-hint">等待提交</span>
+          <span class="block__meta">
+            <span class="block__hint" id="stage-hint">等待提交</span>
+            <button class="ghost-btn ghost-btn--dense" id="cancel-btn" type="button" hidden>取消</button>
+          </span>
         </div>
         <ol class="stages" id="stage-list">
           <li class="stage" data-stage="planning">
@@ -146,7 +151,7 @@
             <div class="empty__card">
               <span class="empty__mark" aria-hidden="true"></span>
               <h3>还没有选中的任务</h3>
-              <p>从左侧选择一条演示任务，或在需求框里描述你想生成的应用。</p>
+              <p>从左侧选择一条任务，或在需求框里描述你想生成的应用。</p>
             </div>
           </div>
         </div>
