@@ -22,7 +22,7 @@
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s3</b></span>
+      <span class="chip">版本 <b id="version-tag">s4</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
       <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
@@ -35,11 +35,12 @@
   </header>
 
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S3 版本</h2>
-    <p>提交需求会调用 <code>POST /api/generate</code> 入队并立刻返回，前端每 1.5s 轮询任务详情，阶段卡片随 <code>stage</code> 依次点亮。</p>
-    <p>任务与产物已落 SQLite（<code>data/app.db</code>），刷新或重启进程都不丢；产物由 MOCK 引擎写入 <code>workspace/&lt;task_id&gt;/</code>，在右侧沙箱中预览。</p>
-    <p>S4 接入 MetaGPT 真实生成，S5 支持在已有结果上继续修改并回溯版本。</p>
-    <p class="help-panel__meta">当前步骤：S3 · 任务 CRUD + SQLite + MOCK 引擎</p>
+    <h2>这是 S4 版本</h2>
+    <p>生成引擎可切换：<code>MOCK_ENGINE</code> 留空为 auto（能导入 MetaGPT 就用真实引擎，否则降级 MOCK），设 <code>1</code> 强制 MOCK，设 <code>0</code> 强制真实引擎。顶栏的引擎标签显示当前实际生效的实现。</p>
+    <p>真实生成单次约 5–10 分钟，受 <code>TASK_TIMEOUT</code>（默认 600s）约束；超时、引擎异常、手动取消都会收尾成终态，失败原因显示在预览区的红色横幅里。</p>
+    <p>命令行可独立验证引擎：<code>python scripts/gen_once.py "做一个番茄钟"</code>；预置演示数据用 <code>python scripts/seed_demo.py</code>。</p>
+    <p>S5 支持在已有结果上继续修改并回溯版本。</p>
+    <p class="help-panel__meta">当前步骤：S4 · MetaGPT 引擎接入（可切换 MOCK）</p>
   </div>
 
   <main class="workspace">
