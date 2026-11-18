@@ -1,10 +1,33 @@
 #!/usr/bin/env bash
 # S1 验收：静态页面可访问，且资源与交互能力齐备
-# 用法：./scripts/verify_s1.sh            # 默认 http://127.0.0.1:8000
-#       BASE_URL=http://IP:8000 ./scripts/verify_s1.sh
+# 用法：bash scripts/verify_s1.sh                        # 本机（deploy/verify.env 的 LOCAL_BASE_URL）
+#       TARGET=public bash scripts/verify_s1.sh          # 公网（deploy/verify.env 的 PUBLIC_BASE_URL）
+#       BASE_URL=http://IP:8000 bash scripts/verify_s1.sh # 临时指定，优先级最高
 set -uo pipefail
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
+# 地址来源优先级：命令行 BASE_URL > 按 TARGET 取 verify.env 里的地址 > 本机 8000
+if [ -z "${BASE_URL:-}" ]; then
+  VERIFY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  # shellcheck disable=SC1091
+  [ -f "$VERIFY_ROOT/deploy/verify.env" ] && . "$VERIFY_ROOT/deploy/verify.env"
+
+  case "${TARGET:-local}" in
+    local)
+      BASE_URL="${LOCAL_BASE_URL:-http://127.0.0.1:8000}"
+      ;;
+    public)
+      if [ -z "${PUBLIC_BASE_URL:-}" ]; then
+        printf 'TARGET=public，但 deploy/verify.env 里没有 PUBLIC_BASE_URL\n' >&2
+        exit 2
+      fi
+      BASE_URL="$PUBLIC_BASE_URL"
+      ;;
+    *)
+      printf 'TARGET 只能是 local 或 public（当前：%s）\n' "$TARGET" >&2
+      exit 2
+      ;;
+  esac
+fi
 BASE_URL="${BASE_URL%/}"
 
 PASS=0
