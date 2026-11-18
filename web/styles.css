@@ -127,6 +127,18 @@ body {
   animation: breathe 3.2s var(--ease) infinite;
 }
 
+/* /health 探测中：琥珀色；探测失败（纯静态服务）：灰色且不再呼吸 */
+.status[data-online="pending"] .status__dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+}
+
+.status[data-online="false"] .status__dot {
+  background: var(--text-2);
+  box-shadow: 0 0 0 3px rgba(107, 118, 131, 0.14);
+  animation: none;
+}
+
 @keyframes breathe {
   0%,
   100% {

@@ -211,10 +211,19 @@
     timers: [],
   };
 
+  // /health 探测结果：决定顶栏状态灯与「引擎」chip 文案
+  const backend = {
+    online: false,
+    step: 's2',
+    engine: 'none',
+  };
+
   const el = {
     version: document.getElementById('version-tag'),
     taskCount: document.getElementById('task-count'),
+    statusWrap: document.getElementById('status-indicator'),
     statusText: document.querySelector('.status__text'),
+    engineChip: document.getElementById('engine-chip'),
     helpBtn: document.getElementById('help-btn'),
     helpPanel: document.getElementById('help-panel'),
     input: document.getElementById('requirement-input'),
@@ -399,11 +408,70 @@
     renderPreview(true);
   }
 
+  // 顶栏：状态灯 + 版本/引擎 chip，统一由 /health 结果驱动
+  function updateStatus() {
+    if (el.statusWrap) {
+      el.statusWrap.dataset.online = backend.online ? 'true' : 'false';
+    }
+
+    const step = (backend.step || 's2').toUpperCase();
+    if (backend.online) {
+      el.statusText.textContent = state.busy ? '模拟生成中 · ' + step : 'FastAPI 已接管 · ' + step;
+    } else {
+      el.statusText.textContent = state.busy ? '离线演示 · 模拟生成中' : '离线演示 · ' + step;
+    }
+
+    if (el.engineChip) {
+      el.engineChip.textContent =
+        backend.engine && backend.engine !== 'none'
+          ? '引擎 ' + String(backend.engine).toUpperCase()
+          : '引擎 未接入';
+    }
+
+    if (el.version && backend.step) {
+      el.version.textContent = backend.step;
+    }
+  }
+
+  // 探测 /health：证明页面确实由 FastAPI 提供（S1 的 http.server 会 404）
+  function probeHealth() {
+    if (typeof window.fetch !== 'function') {
+      updateStatus();
+      return;
+    }
+
+    const controller = typeof window.AbortController === 'function' ? new AbortController() : null;
+    const timer = window.setTimeout(function () {
+      if (controller) controller.abort();
+    }, 2500);
+
+    fetch('/health', {
+      cache: 'no-store',
+      signal: controller ? controller.signal : undefined,
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        backend.online = true;
+        backend.step = data.step || backend.step;
+        backend.engine = data.engine || 'none';
+      })
+      .catch(function () {
+        backend.online = false;
+      })
+      .then(function () {
+        window.clearTimeout(timer);
+        updateStatus();
+      });
+  }
+
   function setBusy(busy) {
     state.busy = busy;
     el.submit.disabled = busy;
     el.submit.querySelector('.primary-btn__label').textContent = busy ? '生成中…' : '生成应用';
-    el.statusText.textContent = busy ? '静态演示 · 模拟生成中' : '静态演示 · S1';
+    updateStatus();
   }
 
   function schedule(fn, delay) {
@@ -549,6 +617,8 @@
 
   function init() {
     bind();
+    updateStatus();
+    probeHealth();
     state.activeId = DEMO_TASKS[0].id;
     renderTasks();
     renderStages();

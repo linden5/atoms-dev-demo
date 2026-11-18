@@ -14,16 +14,16 @@
         <span class="brand__mark" aria-hidden="true"></span>
         <span class="brand__name">Atoms Demo</span>
       </span>
-      <span class="status" id="status-indicator">
+      <span class="status" id="status-indicator" data-online="pending">
         <span class="status__dot" aria-hidden="true"></span>
-        <span class="status__text">静态演示 · S1</span>
+        <span class="status__text">检测后端…</span>
       </span>
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s1</b></span>
+      <span class="chip">版本 <b id="version-tag">s2</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
-      <span class="chip chip--muted" id="engine-chip">引擎 MOCK</span>
+      <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
 
     <div class="topbar__right">
@@ -34,10 +34,10 @@
   </header>
 
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S1 静态版本</h2>
-    <p>页面数据全部为内置演示数据，没有后端。点击任务可切换预览，提交需求会在前端模拟一次生成流程，用来验证交互与阶段展示。</p>
-    <p>S2 起由 FastAPI 接管，S3 接入 SQLite 与真实接口，S4 接入 MetaGPT 引擎。</p>
-    <p class="help-panel__meta">当前步骤：S1 · 静态单页与演示数据</p>
+    <h2>这是 S2 版本</h2>
+    <p>服务已由 FastAPI 接管：顶栏状态灯读的是 `/health` 的真实返回，页面内容仍是内置演示数据。</p>
+    <p>S3 接入 SQLite 与真实任务接口，S4 接入 MetaGPT 引擎。当前提交需求仍是前端模拟，刷新会重置。</p>
+    <p class="help-panel__meta">当前步骤：S2 · FastAPI 接管（/health + 静态托管）</p>
   </div>
 
   <main class="workspace">
