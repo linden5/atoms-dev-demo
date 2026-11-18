@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app import STEP, __version__, db, tasks
+from app import STEP, __version__, db, security, tasks
 from app.api import router as api_router
 from app.config import settings
 
@@ -80,6 +80,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+security.install(app)
 app.include_router(api_router)
 
 # 挂载放在路由之后：显式路由优先匹配，其余交给静态文件
