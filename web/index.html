@@ -22,7 +22,7 @@
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s4</b></span>
+      <span class="chip">版本 <b id="version-tag">s5</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
       <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
@@ -35,12 +35,11 @@
   </header>
 
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S4 版本</h2>
-    <p>生成引擎可切换：<code>MOCK_ENGINE</code> 留空为 auto（能导入 MetaGPT 就用真实引擎，否则降级 MOCK），设 <code>1</code> 强制 MOCK，设 <code>0</code> 强制真实引擎。顶栏的引擎标签显示当前实际生效的实现。</p>
-    <p>真实生成单次约 5–10 分钟，受 <code>TASK_TIMEOUT</code>（默认 600s）约束；超时、引擎异常、手动取消都会收尾成终态，失败原因显示在预览区的红色横幅里。</p>
-    <p>命令行可独立验证引擎：<code>python scripts/gen_once.py "做一个番茄钟"</code>；预置演示数据用 <code>python scripts/seed_demo.py</code>。</p>
-    <p>S5 支持在已有结果上继续修改并回溯版本。</p>
-    <p class="help-panel__meta">当前步骤：S4 · MetaGPT 引擎接入（可切换 MOCK）</p>
+    <h2>这是 S5 版本</h2>
+    <p>选中一条已生成的任务后，点「继续修改」把这条需求作为父任务，提交后生成新版本；版本链用 <code>parent_id</code> 串起来，不复制旧产物。</p>
+    <p>左侧「版本链」列出同一棵树的所有版本（v1 最早），点击任一版本即可切回该版本的产物预览，旧版本的产物始终保留。</p>
+    <p>新增接口：<code>GET /api/tasks/{id}/versions</code>；生成接口复用 <code>parent_id</code> 字段。</p>
+    <p class="help-panel__meta">当前步骤：S5 · 继续修改 + 版本历史</p>
   </div>
 
   <main class="workspace">
@@ -48,7 +47,10 @@
       <section class="block">
         <div class="block__head">
           <h2 class="block__title">需求</h2>
-          <span class="block__hint">Ctrl / ⌘ + Enter 提交</span>
+          <span class="block__meta">
+            <span class="block__hint">Ctrl / ⌘ + Enter 提交</span>
+            <button class="ghost-btn ghost-btn--dense" id="modify-btn" type="button" disabled>继续修改</button>
+          </span>
         </div>
         <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
         <textarea
@@ -58,6 +60,10 @@
           spellcheck="false"
           placeholder="例如：做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题"
         ></textarea>
+        <p class="modify-hint" id="modify-hint" hidden>
+          <span id="modify-hint-text"></span>
+          <button class="link-btn" id="modify-cancel" type="button">取消</button>
+        </p>
         <div class="examples" id="example-list">
           <button class="tag" type="button" data-prompt="做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题">番茄钟</button>
           <button class="tag" type="button" data-prompt="做一个待办清单，可以添加、勾选和删除，显示剩余数量">待办清单</button>
@@ -103,6 +109,14 @@
             <span class="stage__time"></span>
           </li>
         </ol>
+      </section>
+
+      <section class="block" id="version-block" hidden>
+        <div class="block__head">
+          <h2 class="block__title">版本链</h2>
+          <span class="block__hint" id="version-hint"></span>
+        </div>
+        <ol class="versions" id="version-list"></ol>
       </section>
 
       <section class="block block--grow">

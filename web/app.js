@@ -12,6 +12,8 @@
     tasks: [],
     detail: null,
     activeId: null,
+    versions: [],
+    parentId: null,
     width: '100',
     busy: false,
     pollTimer: null,
@@ -31,6 +33,13 @@
     examples: document.getElementById('example-list'),
     submit: document.getElementById('submit-btn'),
     cancel: document.getElementById('cancel-btn'),
+    modify: document.getElementById('modify-btn'),
+    modifyHint: document.getElementById('modify-hint'),
+    modifyHintText: document.getElementById('modify-hint-text'),
+    modifyCancel: document.getElementById('modify-cancel'),
+    versionBlock: document.getElementById('version-block'),
+    versionList: document.getElementById('version-list'),
+    versionHint: document.getElementById('version-hint'),
     stageList: document.getElementById('stage-list'),
     stageHint: document.getElementById('stage-hint'),
     taskList: document.getElementById('task-list'),
@@ -161,7 +170,16 @@
 
       const prompt = document.createElement('span');
       prompt.className = 'task__prompt';
-      prompt.textContent = task.prompt;
+      const versionIndex = state.versions.findIndex(function (item) { return item.id === task.id; });
+      if (state.versions.length > 1 && versionIndex >= 0) {
+        const badge = document.createElement('span');
+        badge.className = 'task__version';
+        badge.textContent = 'v' + (versionIndex + 1);
+        prompt.appendChild(badge);
+        prompt.appendChild(document.createTextNode(task.prompt));
+      } else {
+        prompt.textContent = task.prompt;
+      }
 
       const meta = document.createElement('span');
       meta.className = 'task__meta';
@@ -208,6 +226,85 @@
       renderTasks();
       return [];
     }
+  }
+
+  // ---------- 版本链 ----------
+
+  function renderVersions() {
+    if (!el.versionBlock) return;
+    const versions = state.versions || [];
+    el.versionBlock.hidden = versions.length <= 1;
+    if (versions.length <= 1) {
+      el.versionList.innerHTML = '';
+      return;
+    }
+
+    el.versionHint.textContent = '共 ' + versions.length + ' 个版本';
+    el.versionList.innerHTML = '';
+    versions.forEach(function (version, index) {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'version-chip' + (version.id === state.activeId ? ' is-active' : '');
+      btn.dataset.state = version.status;
+      btn.textContent = 'v' + (index + 1);
+      btn.title = statusLabel(version) + ' · ' + version.prompt;
+      btn.addEventListener('click', function () {
+        selectTask(version.id);
+      });
+      li.appendChild(btn);
+      el.versionList.appendChild(li);
+    });
+  }
+
+  async function loadVersions(id) {
+    try {
+      const data = await api('/api/tasks/' + encodeURIComponent(id) + '/versions');
+      if (state.activeId !== id) return;
+      state.versions = data.versions || [];
+    } catch (err) {
+      state.versions = [];
+    }
+    renderVersions();
+    renderTasks();
+  }
+
+  function versionIndexOf(id) {
+    return state.versions.findIndex(function (item) { return item.id === id; });
+  }
+
+  // ---------- 继续修改 ----------
+
+  function refreshSubmitLabel() {
+    if (state.busy) return;
+    const label = el.submit.querySelector('.primary-btn__label');
+    if (label) label.textContent = state.parentId ? '生成新版本' : '生成应用';
+  }
+
+  function updateModifyState() {
+    if (!el.modify) return;
+    el.modify.disabled = !(state.detail && state.detail.status === 'succeeded');
+  }
+
+  function setModifyTarget(task) {
+    if (!task || task.status !== 'succeeded') return;
+    state.parentId = task.id;
+    const index = versionIndexOf(task.id);
+    el.modifyHint.hidden = false;
+    el.modifyHintText.textContent =
+      '将基于 ' +
+      (index >= 0 ? 'v' + (index + 1) : '当前版本') +
+      ' 生成新版本：' +
+      task.prompt.slice(0, 40);
+    el.input.focus();
+    refreshSubmitLabel();
+  }
+
+  function clearModifyTarget() {
+    state.parentId = null;
+    if (el.modifyHint) el.modifyHint.hidden = true;
+    if (el.modifyHintText) el.modifyHintText.textContent = '';
+    refreshSubmitLabel();
   }
 
   // ---------- 阶段 ----------
@@ -362,6 +459,8 @@
     }
     renderTasks();
     renderStages();
+    renderVersions();
+    updateModifyState();
     renderPreview(false);
 
     if (detail.status === 'failed' && detail.error) {
@@ -373,6 +472,8 @@
     if (isTerminal(detail.status)) {
       stopPolling();
       loadTasks();
+      // 新版本落地后版本链会变长，必须重新拉一次
+      loadVersions(detail.id);
     } else {
       startPolling();
     }
@@ -381,11 +482,13 @@
   async function selectTask(id) {
     if (!id) return;
     state.activeId = id;
+    clearModifyTarget();
     renderTasks();
     try {
       const detail = await api('/api/tasks/' + encodeURIComponent(id));
       if (state.activeId !== id) return;
       applyDetail(detail);
+      await loadVersions(id);
     } catch (err) {
       showError('读取任务失败：' + err.message);
     }
@@ -429,7 +532,10 @@
   function setBusy(busy) {
     state.busy = busy;
     el.submit.disabled = busy;
-    el.submit.querySelector('.primary-btn__label').textContent = busy ? '提交中…' : '生成应用';
+    const label = el.submit.querySelector('.primary-btn__label');
+    if (label) {
+      label.textContent = busy ? '提交中…' : state.parentId ? '生成新版本' : '生成应用';
+    }
     updateStatus();
   }
 
@@ -440,7 +546,7 @@
       prompt: prompt,
       status: 'pending',
       stage: null,
-      parent_id: null,
+      parent_id: state.parentId,
       error: null,
       artifacts: [],
       events: [],
@@ -454,10 +560,14 @@
     if (state.busy) return;
     hideError();
     setBusy(true);
+    const parentId = state.parentId;
+    let accepted = false;
     try {
+      const payload = { prompt: prompt };
+      if (parentId) payload.parent_id = parentId;
       const data = await api('/api/generate', {
         method: 'POST',
-        body: JSON.stringify({ prompt: prompt }),
+        body: JSON.stringify(payload),
       });
       const task = optimisticTask(data.task_id, prompt);
       state.tasks.unshift(task);
@@ -466,13 +576,19 @@
       el.input.value = '';
       renderTasks();
       renderStages();
+      updateModifyState();
       renderPreview(false);
       startPolling();
-      el.taskHint.textContent = '已提交，等待生成…';
+      el.taskHint.textContent = parentId ? '已提交修改，等待生成新版本…' : '已提交，等待生成…';
+      // 立刻把新版本插进版本链：pending 也算一个版本，用户能马上看到 v4
+      loadVersions(task.id);
+      accepted = true;
     } catch (err) {
       showError('提交失败：' + err.message);
     } finally {
       setBusy(false);
+      // 只有提交成功才退出修改态：失败时保留目标，方便改完再试
+      if (accepted) clearModifyTarget();
     }
   }
 
@@ -491,6 +607,7 @@
     const task = state.detail;
     if (!task) return;
     el.input.value = task.prompt;
+    clearModifyTarget();
     submit(task.prompt);
   }
 
@@ -518,6 +635,13 @@
     });
 
     if (el.cancel) el.cancel.addEventListener('click', cancelActive);
+
+    if (el.modify) {
+      el.modify.addEventListener('click', function () {
+        setModifyTarget(state.detail);
+      });
+    }
+    if (el.modifyCancel) el.modifyCancel.addEventListener('click', clearModifyTarget);
 
     el.widthGroup.addEventListener('click', function (event) {
       const btn = event.target.closest('[data-width]');
