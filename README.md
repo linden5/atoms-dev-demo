@@ -1,79 +1,109 @@
 # Atoms Demo
 
-一个可运行的 Atoms Demo：用户输入一段自然语言需求，由智能体（MetaGPT）驱动生成一个可运行的网页应用，并在浏览器中以可视化方式预览。任务状态、生成产物与历史版本持久化在服务端 SQLite。
+输入一句自然语言需求，由智能体生成一个可运行的网页应用，在右侧沙箱里实时预览；不满意就继续提需求，每次修改产生新版本，历史版本随时切回。
+
+当前交付版本：**v1.0（S6 完成）**。任务、产物与版本链持久化在服务端（SQLite + 本地磁盘），刷新或重启进程都不丢。
+
+## 能做什么
+
+| 能力 | 现状 |
+|---|---|
+| 需求 → 生成 | ✅ 引擎可切换：MetaGPT（真实）/ MOCK（无额度兜底） |
+| 状态可观测 | ✅ 三阶段卡片 + 事件表 + 失败原因 + 取消 |
+| 沙箱预览 | ✅ iframe `sandbox="allow-scripts"` + 独立 CSP，可切 375/768/1000/自适应 |
+| 继续修改 | ✅ 以当前版本为父任务生成新版本 |
+| 版本历史 | ✅ 版本链 `v1…vN`，点击切回旧产物 |
+| 持久化 | ✅ SQLite（WAL）+ `workspace/{task_id}/` |
 
 ## 快速开始
 
-当前是 **S2（FastAPI 接管）**：`/health` 可用，`web/` 由 FastAPI 挂载，页面仍使用内置演示数据。
-
 ```bash
-# 建环境并装基础依赖（S2/S3 只需要这一段；S4 的 metagpt 在 requirements.txt 里注释着）
+# 1) 环境（S2/S3 只需基础依赖；S4 起需要 Python 3.11 + metagpt）
+uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 
-# 启动（单 worker，不要加 --workers >1）
+# 2) 启动（单 worker 是硬性约束，不要加 --workers >1）
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
-# 打开 http://127.0.0.1:8000，/health 可直接看到 JSON
+
+# Windows PowerShell 等价写法
+# .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-验收：
+打开 `http://127.0.0.1:8000`；`/health` 看运行状态，`/api/docs` 看接口。
+
+引擎选择（`MOCK_ENGINE`）：
+
+| 取值 | 行为 |
+|---|---|
+| 留空（默认） | auto：能导入 MetaGPT 用真实引擎，否则降级 MOCK |
+| `1` | 强制 MOCK（演示兜底、本地回归） |
+| `0` | 强制真实引擎，装不上直接报错 |
+
+预置演示数据（避免现场等生成）：`python scripts/seed_demo.py --count 2`
+单独验证引擎：`python scripts/gen_once.py "做一个番茄钟" --engine mock`
+
+## 验收
 
 ```bash
-bash scripts/verify_s2.sh                 # 15 项
-bash scripts/verify_s1.sh                 # S1 的 11 项仍然要过
-TARGET=public bash scripts/verify_s2.sh   # 公网（先在 deploy/verify.env 配 PUBLIC_BASE_URL）
+FULL=1 bash scripts/verify_s6.sh                 # 全量回归（S1–S6）
+bash scripts/verify_s3.sh                        # 单步验收
+TARGET=public FULL=1 bash scripts/verify_s6.sh   # 公网（在外部机器执行）
 ```
 
-部署到服务器：
+每个 `verify_sN.sh` 都是 curl + grep，退出码 0 即通过，可重复执行；公网地址在 `deploy/verify.env`（模板见 `.example`）。
+
+## 部署
 
 ```bash
-bash scripts/deploy.sh      # 拉代码 -> 同步依赖 -> 更新 systemd unit -> 重启 -> 探活
+cd ~/atoms-dev-demo
+git pull
+bash scripts/deploy.sh      # 同步依赖 -> 覆盖 systemd unit -> 重启 -> 探活
 ```
 
-S4 起才需要 MetaGPT（Python 3.11 + uv），环境准备见 [docs/setup.md](docs/setup.md)（Linux）与 [docs/setup-windows.md](docs/setup-windows.md)。服务器需放行 8000/TCP。
+固定形态：`0.0.0.0:8000` + `deploy/atoms.service`，不使用域名与 80/443；安全组需放行 `8000/TCP`。
+线上检查：`curl -s localhost:8000/health`、`journalctl -u atoms -n 50 --no-pager`。
+
+## 回滚
+
+```bash
+git checkout s5 && bash scripts/deploy.sh
+```
+
+`main` 上的 tag `s1`…`s6` 每一步都是可独立部署的完整版本；数据库 schema 只增不改，回滚不需要退数据。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/roadmap.md](docs/roadmap.md) | 实施路线图：六步增量交付、每步交付物与验收标准、部署与回滚方式、进度跟踪 |
-| [docs/design.md](docs/design.md) | 架构设计文档：分层架构、核心流程、模块设计、数据模型、接口契约、技术决策记录、非功能目标、风险与演进 |
-| [docs/setup.md](docs/setup.md) | Linux 环境搭建与运行指南：uv / Python 3.11 / 依赖 / LLM 配置 / 启动 / systemd / 故障排查 |
-| [docs/setup-windows.md](docs/setup-windows.md) | Windows 环境搭建与运行指南：uv / PowerShell 激活 / 局域网访问 / 同步到服务器 / 双平台差异 |
-| [docs/steps/](docs/steps/) | 每个步骤的落地记录：改了什么 / 怎么部署 / 怎么回滚 / 验收命令 |
-
-## 当前进度
-
-| 步骤 | 内容 | 状态 |
-|---|---|---|
-| S1 | 静态单页 + 演示数据 | 完成，`tag s1` |
-| S2 | FastAPI：`/health` + 静态托管 | 完成，`tag s2` |
-| S3 | 任务 CRUD + SQLite + MOCK 引擎 | 未开始 |
-| S4 | 接入真实 MetaGPT 引擎 | 未开始 |
-| S5 | 继续修改 + 版本历史 | 未开始 |
-| S6 | 安全加固与交付 | 未开始 |
-
-详见 [docs/roadmap.md](docs/roadmap.md)。
-
-## 技术栈
-
-FastAPI + SQLite + MetaGPT（Python 3.11）+ 单页静态前端（iframe 沙箱预览）。
+| [docs/delivery.md](docs/delivery.md) | 交付说明：取舍、完成度、验收结果、后续优先级 |
+| [docs/design.md](docs/design.md) | 架构与接口契约（权威来源） |
+| [docs/roadmap.md](docs/roadmap.md) | 六步计划、每步验收标准、进度与降级策略 |
+| [docs/steps/](docs/steps/) | 每步落地记录：改了什么 / 怎么部署 / 怎么验收 / 怎么回滚 |
+| [docs/setup.md](docs/setup.md) · [docs/setup-windows.md](docs/setup-windows.md) | Linux / Windows 环境搭建 |
+| [docs/agent/git-commit.md](docs/agent/git-commit.md) | 提交规范（type/scope、拆分要求） |
+| [AGENTS.md](AGENTS.md) | 给 AI 协作者的约定与当前状态 |
 
 ## 目录结构
 
 ```
-web/          单页前端（S1 起）
-deploy/       systemd unit（S1 起）
-scripts/      deploy.sh、verify_sN.sh（S1 起）；gen_once.py、seed_demo.py（S4 起）
-app/          FastAPI 接口层、SQLite 访问、可替换的引擎层（S2/S3/S4 逐步加入）
-workspace/    生成产物，按 task_id 分目录（S3 起，不入版本控制）
-data/         SQLite 数据文件（S3 起，不入版本控制）
-logs/         运行日志（S2 起，不入版本控制）
-docs/         设计、路线图、环境指南、每步记录
+app/          FastAPI 入口、路由、编排、SQLite、安全头、可替换引擎层
+web/          单页前端（原生 HTML/CSS/JS，无构建）
+scripts/      deploy.sh、verify_sN.sh、gen_once.py、seed_demo.py
+deploy/       systemd unit 与验收地址配置模板
+docs/         设计、路线图、环境指南、每步记录、交付说明
+workspace/    生成产物，按 task_id 分目录    （运行时生成，不入库）
+data/         SQLite 数据文件                （运行时生成，不入库）
+logs/         运行日志                       （运行时生成，不入库）
 ```
 
-## 工程约定
+## 技术栈
 
-- 产物路径固定 `workspace/{task_id}/`，接口只读该目录下的白名单文件
-- `MOCK_ENGINE=1` 时引擎层返回固定产物，用于不消耗 LLM 额度地调试接口层
-- `workspace/`、`data/`、`.venv/` 不纳入版本控制
+FastAPI + SQLite（WAL）+ MetaGPT（单角色，懒加载）+ 原生前端 + systemd。
+不引入 ORM / Celery / Redis / 前端框架，队列与并发用 `asyncio` 原生能力，单进程单 worker。
+
+## 已知限制
+
+- 真实 MetaGPT 生成需 Python 3.11 + `metagpt` + LLM Key，本仓库默认 auto 会降级 MOCK；真实生成的时延与稳定性需在服务器上验证。
+- 无鉴权、无 HTTPS、无限流：面向演示，不建议直接暴露敏感数据。
+- 只支持单 worker，无法水平扩展；产物上限 50MB/任务。
