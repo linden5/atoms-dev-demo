@@ -4,26 +4,33 @@
 
 ## 快速开始
 
-当前是 **S1（静态版）**，只需要一个静态文件服务，没有任何 Python 依赖：
+当前是 **S2（FastAPI 接管）**：`/health` 可用，`web/` 由 FastAPI 挂载，页面仍使用内置演示数据。
 
 ```bash
-python3 -m http.server 8000 --directory web
-# 打开 http://127.0.0.1:8000
+# 建环境并装基础依赖（S2/S3 只需要这一段；S4 的 metagpt 在 requirements.txt 里注释着）
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+
+# 启动（单 worker，不要加 --workers >1）
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 打开 http://127.0.0.1:8000，/health 可直接看到 JSON
 ```
 
 验收：
 
 ```bash
-BASE_URL=http://127.0.0.1:8000 ./scripts/verify_s1.sh
+bash scripts/verify_s2.sh                 # 15 项
+bash scripts/verify_s1.sh                 # S1 的 11 项仍然要过
+TARGET=public bash scripts/verify_s2.sh   # 公网（先在 deploy/verify.env 配 PUBLIC_BASE_URL）
 ```
 
 部署到服务器：
 
 ```bash
-./scripts/deploy.sh      # 拉代码 -> 更新 systemd unit -> 重启 -> 探活
+bash scripts/deploy.sh      # 拉代码 -> 同步依赖 -> 更新 systemd unit -> 重启 -> 探活
 ```
 
-S2 起才需要 FastAPI，S4 起才需要 MetaGPT（Python 3.11 + uv），环境准备见 [docs/setup.md](docs/setup.md)（Linux）与 [docs/setup-windows.md](docs/setup-windows.md)。服务器需放行 8000/TCP。
+S4 起才需要 MetaGPT（Python 3.11 + uv），环境准备见 [docs/setup.md](docs/setup.md)（Linux）与 [docs/setup-windows.md](docs/setup-windows.md)。服务器需放行 8000/TCP。
 
 ## 文档
 
@@ -40,7 +47,7 @@ S2 起才需要 FastAPI，S4 起才需要 MetaGPT（Python 3.11 + uv），环境
 | 步骤 | 内容 | 状态 |
 |---|---|---|
 | S1 | 静态单页 + 演示数据 | 完成，`tag s1` |
-| S2 | FastAPI：`/health` + 静态托管 | 未开始 |
+| S2 | FastAPI：`/health` + 静态托管 | 完成，`tag s2` |
 | S3 | 任务 CRUD + SQLite + MOCK 引擎 | 未开始 |
 | S4 | 接入真实 MetaGPT 引擎 | 未开始 |
 | S5 | 继续修改 + 版本历史 | 未开始 |
