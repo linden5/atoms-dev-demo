@@ -70,8 +70,9 @@ expect_contains "存在任务列表容器" "${BASE_URL}/" 'id="task-list"'
 expect_contains "存在示例 prompt 快捷入口" "${BASE_URL}/" 'data-prompt='
 
 expect_contains "样式表可访问且含设计变量" "${BASE_URL}/styles.css" "--accent-0"
-expect_contains "脚本可访问且含演示数据" "${BASE_URL}/app.js" "DEMO_TASKS"
-expect_contains "脚本包含生成模拟逻辑（提交可交互）" "${BASE_URL}/app.js" "simulateGeneration"
+# S1 的演示数据在 S3 被真实接口取代，因此这里只断言"页面脚本能提交需求"，
+# 不写死 DEMO_TASKS：否则 S3 起的全量回归会误报。
+expect_contains "脚本可访问且包含提交逻辑" "${BASE_URL}/app.js" "/api/generate"
 expect_contains "脚本包含失败态处理" "${BASE_URL}/app.js" "errorBanner"
 
 printf '\n结果：%d 通过 / %d 失败\n' "$PASS" "$FAIL"

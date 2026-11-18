@@ -115,13 +115,14 @@ case "$mode" in
   *) no "缺少 engine_mode 字段（实际：${mode:-空}）" ;;
 esac
 
-# 版本号按小版本比较：后续步骤会继续 +0.1，写死 0.4 会让 S5 起的回归变成噪音
+# 版本号按 major.minor 比较：后续步骤会继续涨版本，写死 0.4 会让回归变成噪音
 app_version="$(json_field "$health" version)"
+app_major="$(printf '%s' "$app_version" | cut -d. -f1)"
 app_minor="$(printf '%s' "$app_version" | cut -d. -f2)"
-case "$app_minor" in
+case "${app_major}${app_minor}" in
   '' | *[!0-9]*) no "版本号无法解析（${app_version:-空}）" ;;
   *)
-    if [ "$app_minor" -ge 4 ]; then
+    if [ "$app_major" -ge 1 ] || [ "$app_minor" -ge 4 ]; then
       ok "版本号不低于 0.4（实际：${app_version}）"
     else
       no "版本号是 ${app_version}，S4 的引擎改动尚未上线"
