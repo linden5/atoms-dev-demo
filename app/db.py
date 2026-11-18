@@ -196,6 +196,58 @@ def list_artifacts(task_id: str) -> list[models.Artifact]:
     return [models.Artifact(path=row["path"], kind=row["kind"], size=row["size"]) for row in rows]
 
 
+# ---------- 版本链 ----------
+
+
+def root_of(task_id: str) -> str:
+    """沿 parent_id 向上找到版本链的根；异常（环、断链）时返回找到的最后一个已知节点。"""
+    conn = connect()
+    current = task_id
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        row = conn.execute("SELECT id, parent_id FROM tasks WHERE id = ?", (current,)).fetchone()
+        if row is None:
+            break
+        parent = row["parent_id"]
+        if not parent:
+            return row["id"]
+        current = parent
+    return current or task_id
+
+
+def list_versions(root_id: str, limit: int = 200) -> list[models.Task]:
+    """从根节点广度优先收集同一版本树，并按创建时间升序编号（v1 最早）。
+
+    一次查询取回候选任务后在内存里建父子关系：任务量级是演示级别（几十条），
+    比按层递归查库更简单，也避免 N+1。
+    """
+    rows = connect().execute(
+        "SELECT * FROM tasks ORDER BY created_at ASC, rowid ASC LIMIT ?", (limit,)
+    ).fetchall()
+    tasks = {row["id"]: _hydrate(row, with_events=False) for row in rows}
+    if root_id not in tasks:
+        return []
+
+    children: dict[str, list[str]] = {}
+    for task in tasks.values():
+        if task.parent_id and task.parent_id in tasks:
+            children.setdefault(task.parent_id, []).append(task.id)
+
+    order: list[str] = []
+    queue = [root_id]
+    while queue:
+        current = queue.pop(0)
+        if current in order:
+            continue
+        order.append(current)
+        queue.extend(children.get(current, []))
+
+    versions = [tasks[task_id] for task_id in order if task_id in tasks]
+    versions.sort(key=lambda t: (t.created_at, t.id))
+    return versions
+
+
 # ---------- 事件 ----------
 
 
