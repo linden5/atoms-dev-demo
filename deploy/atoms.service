@@ -1,5 +1,5 @@
-; S1 版本：仅提供静态文件服务
-; S2 起把 ExecStart 换成 uvicorn，其余保持不变
+; S2 版本：uvicorn 单 worker 提供 /health + web/ 静态托管
+; 单 worker 是硬性约束：S3 起任务队列与并发信号量都在进程内，多 worker 会导致状态不一致
 [Unit]
 Description=Atoms Demo
 After=network.target
@@ -8,7 +8,8 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/atoms-dev-demo
-ExecStart=/usr/bin/python3 -m http.server 8000 --bind 0.0.0.0 --directory web
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/atoms-dev-demo/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 Restart=always
 RestartSec=2
 StandardOutput=journal
