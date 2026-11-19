@@ -28,6 +28,7 @@
     </div>
 
     <div class="topbar__right">
+      <button class="ghost-btn ghost-btn--dense" id="home-back-btn" type="button" hidden>首页</button>
       <button class="ghost-btn ghost-btn--dense" id="share-btn" type="button" aria-expanded="false" aria-controls="share-panel">
         Share
       </button>
@@ -88,7 +89,59 @@
     <p class="help-panel__meta">当前步骤：S8 · 真实生成与发布</p>
   </div>
 
-  <main class="workspace">
+  <main class="home" id="home-view">
+    <aside class="home__side" aria-label="首页导航">
+      <h2 class="home__side-title">导航</h2>
+      <button class="home__nav is-active" id="home-nav-chat" type="button" aria-pressed="true">对话</button>
+      <button class="home__nav" id="home-nav-history" type="button" aria-pressed="false">
+        历史任务
+        <span class="home__nav-count" id="home-nav-count" hidden></span>
+      </button>
+    </aside>
+
+    <section class="home__main">
+      <div class="home__pane" id="home-pane-chat">
+        <div class="home__hero">
+          <h1 class="home__title">描述一个想法，生成一个应用</h1>
+          <p class="home__subtitle">
+            输入自然语言需求，Agent 会先规划、再写代码、最后自检，生成可运行的网页应用；之后可以继续用对话迭代。
+          </p>
+          <div class="home__composer">
+            <label class="sr-only" for="home-input">描述你要生成的应用</label>
+            <textarea
+              id="home-input"
+              class="home__input"
+              rows="4"
+              spellcheck="false"
+              placeholder="描述你想做的应用，例如：做一个番茄钟，25 分钟专注 + 5 分钟休息"
+            ></textarea>
+            <div class="home__actions">
+              <span class="composer__kbd">Ctrl / ⌘ + Enter</span>
+              <button class="home__submit" id="home-submit-btn" type="button">开始生成</button>
+            </div>
+          </div>
+          <div class="examples" id="home-example-list">
+            <button class="tag" type="button" data-prompt="做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题">番茄钟</button>
+            <button class="tag" type="button" data-prompt="做一个待办清单，可以添加、勾选和删除，显示剩余数量">待办清单</button>
+            <button class="tag" type="button" data-prompt="做一个极简记账面板，记录收支并显示结余">记账面板</button>
+          </div>
+          <p class="home__error" id="home-error" hidden></p>
+        </div>
+      </div>
+
+      <div class="home__pane" id="home-pane-history" hidden>
+        <div class="home__history">
+          <div class="home__history-head">
+            <h2 class="home__history-title">历史任务</h2>
+            <span class="history__count" id="home-history-count"></span>
+          </div>
+          <ul class="home__tasks" id="home-task-list"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <main class="workspace" id="workspace-view" hidden>
     <aside class="chat" aria-label="与智能体的对话">
       <header class="chat__head">
         <span class="agent">

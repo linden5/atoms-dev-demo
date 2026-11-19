@@ -21,6 +21,7 @@
     pollTaskId: null,
     pollFailures: 0,
     loaded: false,
+    view: 'home',
     scrollToBottom: false,
     history: { items: [], total: 0, limit: 20, tab: 'versions', query: '' },
     // 发布：publish 是当前应用（会话）的公开地址，task_id 指向它绑定的版本
@@ -86,6 +87,20 @@
     shareStatus: document.getElementById('share-status'),
     shareCopy: document.getElementById('share-copy'),
     shareZip: document.getElementById('share-zip'),
+    homeView: document.getElementById('home-view'),
+    workspaceView: document.getElementById('workspace-view'),
+    homeBack: document.getElementById('home-back-btn'),
+    homeNavChat: document.getElementById('home-nav-chat'),
+    homeNavHistory: document.getElementById('home-nav-history'),
+    homeNavCount: document.getElementById('home-nav-count'),
+    homePaneChat: document.getElementById('home-pane-chat'),
+    homePaneHistory: document.getElementById('home-pane-history'),
+    homeInput: document.getElementById('home-input'),
+    homeSubmit: document.getElementById('home-submit-btn'),
+    homeExamples: document.getElementById('home-example-list'),
+    homeError: document.getElementById('home-error'),
+    homeTaskList: document.getElementById('home-task-list'),
+    homeHistoryCount: document.getElementById('home-history-count'),
   };
 
   // ---------- 工具 ----------
@@ -248,7 +263,11 @@
       renderPublish();
       await loadSessions();
       refreshHistoryIfOpen();
-      if (el.input) el.input.focus();
+      if (state.view === 'home') {
+        if (el.homeInput) el.homeInput.focus();
+      } else if (el.input) {
+        el.input.focus();
+      }
     } catch (err) {
       showError('新建会话失败：' + err.message);
     }
@@ -899,10 +918,15 @@
   function showError(message) {
     el.errorBanner.hidden = false;
     el.errorText.textContent = message;
+    if (el.homeError) {
+      el.homeError.textContent = message;
+      el.homeError.hidden = false;
+    }
   }
 
   function hideError() {
     el.errorBanner.hidden = true;
+    if (el.homeError) el.homeError.hidden = true;
   }
 
   // ---------- 轮询 ----------
@@ -977,6 +1001,7 @@
   function setBusy(busy) {
     state.busy = busy;
     if (el.submit) el.submit.disabled = busy;
+    if (el.homeSubmit) el.homeSubmit.disabled = busy;
     const label = el.submit && el.submit.querySelector('.primary-btn__label');
     if (label) label.textContent = busy ? '发送中…' : '发送';
     updateStatus();
@@ -997,6 +1022,7 @@
         body: JSON.stringify({ content: text }),
       });
       if (el.input) el.input.value = '';
+      if (el.homeInput) el.homeInput.value = '';
       await selectSession(state.sessionId, result.task_id || null);
       if (result.task_id) {
         state.activeId = result.task_id;
@@ -1004,6 +1030,7 @@
         startPolling(result.task_id);
       }
       loadSessions();
+      showView('workspace');
     } catch (err) {
       showError('发送失败：' + err.message);
     } finally {
@@ -1228,6 +1255,79 @@
     if (open && panel === el.publishPanel) refreshPublish();
   }
 
+  // ---------- 首页视图 ----------
+
+  function showView(view) {
+    state.view = view;
+    if (el.homeView) el.homeView.hidden = view !== 'home';
+    if (el.workspaceView) el.workspaceView.hidden = view !== 'workspace';
+    if (el.homeBack) el.homeBack.hidden = view === 'home';
+    if (view === 'home') renderHomeTasks();
+  }
+
+  function setHomePane(pane) {
+    const chat = pane === 'chat';
+    if (el.homeNavChat) {
+      el.homeNavChat.classList.toggle('is-active', chat);
+      el.homeNavChat.setAttribute('aria-pressed', chat ? 'true' : 'false');
+    }
+    if (el.homeNavHistory) {
+      el.homeNavHistory.classList.toggle('is-active', !chat);
+      el.homeNavHistory.setAttribute('aria-pressed', chat ? 'false' : 'true');
+    }
+    if (el.homePaneChat) el.homePaneChat.hidden = !chat;
+    if (el.homePaneHistory) el.homePaneHistory.hidden = chat;
+    if (!chat) renderHomeTasks();
+  }
+
+  function renderHomeTasks() {
+    if (!el.homeTaskList) return;
+    el.homeTaskList.innerHTML = '';
+    const sessions = state.sessions;
+    const total = state.totalSessions || sessions.length;
+
+    if (el.homeHistoryCount) {
+      el.homeHistoryCount.textContent = total ? total + ' 个会话' : '';
+    }
+    if (el.homeNavCount) {
+      el.homeNavCount.textContent = String(total);
+      el.homeNavCount.hidden = !total;
+    }
+
+    if (!sessions.length) {
+      el.homeTaskList.appendChild(
+        node('li', 'history__empty', '还没有任务，回「对话」发一句需求就开始了')
+      );
+      return;
+    }
+
+    sessions.forEach(function (session) {
+      const li = document.createElement('li');
+      const btn = node(
+        'button',
+        'home__task' + (session.id === state.sessionId ? ' is-active' : '')
+      );
+      btn.type = 'button';
+      btn.dataset.sessionId = session.id;
+      btn.title = session.title || '新会话';
+      btn.appendChild(node('span', 'home__task-name', session.title || '新会话'));
+
+      const meta = node('span', 'history__meta');
+      meta.appendChild(node('span', null, fmtStamp(session.updated_at)));
+      meta.appendChild(node('span', null, session.message_count + ' 条消息'));
+      meta.appendChild(node('span', null, '打开工作台'));
+      btn.appendChild(meta);
+      li.appendChild(btn);
+      el.homeTaskList.appendChild(li);
+    });
+  }
+
+  function openSessionFromHome(sessionId) {
+    showView('workspace');
+    if (!sessionId || sessionId === state.sessionId) return;
+    selectSession(sessionId);
+  }
+
   // ---------- 事件绑定 ----------
 
   function bind() {
@@ -1288,6 +1388,53 @@
         renderMessageHistory();
       });
     }
+
+    if (el.homeNavChat) {
+      el.homeNavChat.addEventListener('click', function () {
+        setHomePane('chat');
+      });
+    }
+
+    if (el.homeNavHistory) {
+      el.homeNavHistory.addEventListener('click', function () {
+        setHomePane('history');
+      });
+    }
+
+    if (el.homeTaskList) {
+      el.homeTaskList.addEventListener('click', function (event) {
+        const btn = event.target.closest('[data-session-id]');
+        if (btn) openSessionFromHome(btn.dataset.sessionId);
+      });
+    }
+
+    if (el.homeExamples) {
+      el.homeExamples.addEventListener('click', function (event) {
+        const btn = event.target.closest('[data-prompt]');
+        if (!btn) return;
+        el.homeInput.value = btn.dataset.prompt;
+        el.homeInput.focus();
+      });
+    }
+
+    if (el.homeSubmit) {
+      el.homeSubmit.addEventListener('click', function () {
+        send(el.homeInput.value);
+      });
+    }
+
+    if (el.homeInput) {
+      el.homeInput.addEventListener('keydown', function (event) {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          el.homeSubmit.click();
+        }
+      });
+    }
+
+    if (el.homeBack) el.homeBack.addEventListener('click', function () {
+      showView('home');
+    });
 
     if (el.chatLog) {
       el.chatLog.addEventListener('click', function (event) {
@@ -1416,14 +1563,9 @@
     bind();
     updateStatus();
     probeHealth();
-
-    const sessions = await loadSessions();
-    if (sessions.length) {
-      await selectSession(sessions[0].id);
-    } else {
-      await createSession();
-    }
-    renderChat();
+    showView('home');
+    await loadSessions();
+    renderHomeTasks();
   }
 
   if (document.readyState === 'loading') {
