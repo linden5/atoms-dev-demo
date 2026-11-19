@@ -122,7 +122,12 @@ async def generate(args: argparse.Namespace) -> int:
         stages.append(stage)
         print(f"[stage] {stage:<8} +{time.perf_counter() - started:5.1f}s", flush=True)
 
-    print(f"[info] engine={engine.name} timeout={args.timeout}s workdir={workdir}", flush=True)
+    # 把档位与模型名打出来：切换档位后第一件事就是确认"到底用的是哪个模型"
+    print(
+        f"[info] engine={engine.name} profile={settings.llm_profile or '-'} "
+        f"model={settings.llm_model or '-'} timeout={args.timeout}s workdir={workdir}",
+        flush=True,
+    )
     try:
         await asyncio.wait_for(engine.run(f"cli_{stamp}", args.prompt, workdir, emit), timeout=args.timeout)
         result = scan_artifacts(workdir)
@@ -139,6 +144,8 @@ async def generate(args: argparse.Namespace) -> int:
     for rel, kind, size in result.files:
         print(f"  - {rel:<24} {kind:<6} {size:>8} B")
     print(f"[info] 预览命令：python -m uvicorn app.main:app --port 8000 后访问 /api/tasks/<task_id>/preview")
+    # 真实生成的产物是唯一可复现的证据：放在最后一行，方便直接复制，也不怕被上面的输出刷掉
+    print(f"[产物] {workdir.resolve()}", flush=True)
     return 0
 
 
