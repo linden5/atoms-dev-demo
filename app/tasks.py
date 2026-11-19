@@ -151,6 +151,8 @@ async def start(
     )
     db.create_task(task)
     db.add_event(task_id, models.STATUS_PENDING)
+    # S9：建任务时同步建应用存储行（token 生成），预览注入 window.__ATOMS__ 时直接可用
+    db.ensure_task_data(task_id)
 
     handle = asyncio.create_task(_run(task_id, engine_prompt or prompt), name=f"task:{task_id}")
     _running[task_id] = handle
