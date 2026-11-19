@@ -621,6 +621,19 @@
     return Math.max(0, Math.round((ended - began) / 1000));
   }
 
+  // 调用级事件（引擎上报的重试 / 修正提示）不是阶段名，过滤条件用固定前缀识别
+  const CALL_NOTE_PREFIX = '调用';
+
+  function latestCallNote(task) {
+    if (!task || isTerminal(task.status)) return '';
+    const notes = (task.events || []).filter(function (event) {
+      return STAGES.indexOf(event.message) < 0 && (event.message || '').indexOf(CALL_NOTE_PREFIX) === 0;
+    });
+    if (!notes.length) return '';
+    const text = notes[notes.length - 1].message;
+    return text.length > 60 ? text.slice(0, 60) + '…' : text;
+  }
+
   function progressLabel(task) {
     const done = completedSteps(task);
     const elapsed = elapsedSeconds(task);
@@ -629,7 +642,8 @@
     if (task.status === 'failed') return '已处理 ' + done + ' 步 · 失败' + clock;
     if (task.status === 'cancelled') return '已处理 ' + done + ' 步 · 已取消' + clock;
     if (task.status === 'running') {
-      return '正在' + (STAGE_LABEL[task.stage] || '生成') + '…' + clock;
+      const note = latestCallNote(task);
+      return '正在' + (STAGE_LABEL[task.stage] || '生成') + '…' + clock + (note ? ' · ' + note : '');
     }
     return '排队中…' + clock;
   }
