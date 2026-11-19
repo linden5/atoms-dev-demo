@@ -63,24 +63,25 @@ TARGET=public FULL=1 bash scripts/verify_s8.sh   # 公网（在外部机器执�
 
 ## 部署
 
+一键部署，服务器上各一条命令，分支 / 端口 / 服务 / 模型档位全部写死：
+
 ```bash
-cd ~/atoms-dev-demo
-bash scripts/restart_and_verify.sh dev    # 拉代码 -> 切档 -> 健康检查 -> 模型冒烟，服务未装自动先安装
+bash scripts/deploy_accept.sh    # 验收：main 分支 / 8000 端口 / atoms 服务 / strong 档
+bash scripts/deploy_dev.sh       # 自测：dev 分支 / 8001 端口 / atoms-dev 服务 / dev 档
 ```
 
-等价拆解：`bash scripts/deploy.sh`（拉分支 → 同步依赖 → 渲染 systemd unit → 重启 → 探活）+ `bash scripts/switch_model.sh use <档位>`。
+流程：拉代码 → 同步依赖 → 切档 → 健康检查 → 模型连通冒烟，任一步失败自动回滚档位；systemd 里还没有服务时会自动先安装。首次启用自测环境：`git clone -b dev <仓库地址> ~/atoms-dev-demo-dev`。
 
-多实例部署：同一台服务器按分支跑两套环境，目录 / 端口 / systemd 服务 / SQLite 数据各自独立；各一条命令，端口与档位已写死：
-
-| 脚本 | 环境 | 分支 | 目录 | 端口 | 服务 | 档位 |
+| 脚本 | 环境 | 分支 | 目录 | 端口 | systemd 服务 | 档位 |
 |---|---|---|---|---|---|---|
-| `bash scripts/deploy_accept.sh` | 验收 | `main` | `~/atoms-dev-demo` | 8000 | `atoms` | `strong` |
-| `bash scripts/deploy_dev.sh` | 自测 | `dev` | `~/atoms-dev-demo-dev` | 8001 | `atoms-dev` | `dev` |
+| `deploy_accept.sh` | 验收 | `main` | `~/atoms-dev-demo` | 8000 | `atoms` | `strong` |
+| `deploy_dev.sh` | 自测 | `dev` | `~/atoms-dev-demo-dev` | 8001 | `atoms-dev` | `dev` |
 
-两个脚本都支持把参数透传给 `restart_and_verify.sh`：`--full` 追加全量验收、`--no-smoke` 跳过模型冒烟、`--no-deploy` 只切档不拉代码。首次启用自测环境：`git clone -b dev <仓库地址> ~/atoms-dev-demo-dev`。
-等价的底层写法（脚本就是这么封装的）：`INSTANCE=dev bash scripts/deploy.sh` + `SERVICE=atoms-dev BASE_URL=http://127.0.0.1:8001 bash scripts/switch_model.sh use dev`；验证自测环境：`BASE_URL=http://127.0.0.1:8001 bash scripts/verify_s8.sh`。
-固定形态：验收 `0.0.0.0:8000`（服务 `atoms`）、自测 `0.0.0.0:8001`（服务 `atoms-dev`），不使用域名与 80/443；安全组需放行 `8000,8001/TCP`。
-线上检查：`curl -s localhost:8000/health`（验收，应看到 `step=s8 engine=llm`）、`journalctl -u atoms -n 50 --no-pager`；自测实例把端口换成 8001、服务名换成 `atoms-dev`。
+两套环境目录 / 端口 / 服务 / SQLite 数据各自独立，互不影响。可选参数（透传给 `restart_and_verify.sh`）：`--full` 追加全量验收、`--no-smoke` 跳过模型冒烟、`--no-deploy` 只切档不拉代码。
+
+线上检查：`curl -s localhost:8000/health`（验收，应看到 `step=s8 engine=llm`）、`journalctl -u atoms -f`；自测实例把端口换成 8001、服务名换成 `atoms-dev`。
+等价的底层写法（一键脚本就是这么封装的）：`INSTANCE=dev bash scripts/deploy.sh` + `SERVICE=atoms-dev BASE_URL=http://127.0.0.1:8001 bash scripts/switch_model.sh use dev`；验证自测环境：`BASE_URL=http://127.0.0.1:8001 bash scripts/verify_s8.sh`。
+固定形态：验收 `0.0.0.0:8000`、自测 `0.0.0.0:8001`，不使用域名与 80/443；安全组需放行 `8000,8001/TCP`。
 
 ## 回滚
 
