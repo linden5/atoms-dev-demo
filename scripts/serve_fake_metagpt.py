@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -41,7 +42,10 @@ def main() -> int:
     import uvicorn
 
     version = fake_metagpt.install(args.scenario)
-    print(f"[info] 假 metagpt {version} 已注入，scenario={args.scenario}", flush=True)
+    # 场景探索不写缓存：否则换一个 scenario 重跑同一条需求会直接命中上一次的产物，
+    # 看起来像"失败态/超时没生效"。要测缓存请用真实端点或 gen_once。
+    os.environ.setdefault("LLM_CACHE", "0")
+    print(f"[info] 假 metagpt {version} 已注入，scenario={args.scenario}（缓存已关闭）", flush=True)
     print(f"[info] 打开 http://{args.host}:{args.port}/ ，顶栏应显示「引擎 METAGPT」", flush=True)
 
     uvicorn.run("app.main:app", host=args.host, port=args.port, workers=1)

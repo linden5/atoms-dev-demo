@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import os
 import sys
 import types
 
@@ -195,6 +196,10 @@ def install(scenario: str = "success", delay: float = 0.0) -> str:
     _state["scenario"] = name
     _state["delay"] = float(extra) if extra else delay
     _state["prompts"] = []
+
+    # 把场景写进缓存身份：否则先跑 success 再跑 slow:N，同 prompt 会直接命中缓存，
+    # 超时/失败场景根本不会被触发，看起来像"假包没生效"。
+    os.environ["ATOMS_CACHE_TAG"] = f"fake-metagpt:{name}"
 
     pkg = types.ModuleType("metagpt")
     pkg.__version__ = FAKE_VERSION
