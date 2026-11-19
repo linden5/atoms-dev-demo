@@ -17,6 +17,13 @@ Environment=PYTHONUNBUFFERED=1
 ; Environment=LLM_MODEL=deepseek-chat
 ; Key 单独放 EnvironmentFile（权限 600），不要写在本文件里
 ; EnvironmentFile=/etc/atoms/llm.env
+;
+; 能力档切换：不要改本文件，用 scripts/switch_model.sh <档位>。
+; 它在 /etc/systemd/system/atoms.service.d/ 下写 drop-in，注入 3 行：
+;   Environment=LLM_PROFILE=<档位>       # 只用于 /health 展示与日志
+;   Environment=LLM_PROFILE_DIR=<目录>   # 档位目录，默认 ~/.atoms/llm
+;   EnvironmentFile=<目录>/<档位>.env    # 密钥只存在这里
+; 切回默认：删掉 drop-in 后 systemctl daemon-reload && systemctl restart atoms
 ExecStart=/home/ubuntu/atoms-dev-demo/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 Restart=always
 RestartSec=2
