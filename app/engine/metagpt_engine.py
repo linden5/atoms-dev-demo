@@ -13,11 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
 from app.engine.base import EmitFn
+from app.engine.html_utils import extract_html  # noqa: F401  共用抽取规则，同时保持旧导入路径可用
 
 log = logging.getLogger("atoms.engine.metagpt")
 
@@ -34,12 +34,6 @@ PROMPT = """你是资深前端工程师。请把下面的需求实现成一个**
 需求：{requirement}
 """
 
-_FENCE = re.compile(r"```(?:html|HTML)?\s*(.*?)```", re.S)
-_DOCTYPE = re.compile(r"<!doctype\s+html", re.I)
-_HTML_TAG = re.compile(r"<html[\s>]", re.I)
-_CLOSING = re.compile(r"</html\s*>", re.I)
-
-
 def metagpt_available() -> tuple[bool, str]:
     """探测 MetaGPT 是否可导入；只在函数内 import，保证模块本身可被安全导入。"""
     try:
@@ -47,23 +41,6 @@ def metagpt_available() -> tuple[bool, str]:
     except Exception as exc:  # ImportError 之外还可能是依赖版本冲突
         return False, f"{type(exc).__name__}: {exc}"
     return True, getattr(metagpt, "__version__", "unknown")
-
-
-def extract_html(text: str) -> str | None:
-    """从模型输出里取出 HTML：优先代码块，其次全文，兜底从第一个 <!doctype>/<html 起截断。"""
-    if not text or not text.strip():
-        return None
-    fenced = _FENCE.search(text)
-    candidate = fenced.group(1) if fenced else text
-
-    starts = [m.start() for m in (_DOCTYPE.search(candidate), _HTML_TAG.search(candidate)) if m]
-    if not starts:
-        return None
-    begin = min(starts)
-    ends = [m.end() for m in _CLOSING.finditer(candidate)]
-    body = candidate[begin : ends[-1]] if ends else candidate[begin:]
-    body = body.strip()
-    return body or None
 
 
 _role_cls: Any = None

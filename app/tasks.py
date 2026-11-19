@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import time
@@ -18,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import db, models, planner
-from app.config import ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings
+from app.config import ENGINE_MODE_LLM, ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings
 from app.engine.base import Engine
 from app.engine.mock_engine import MockEngine
 
@@ -46,35 +47,58 @@ class ArtifactTooLarge(RuntimeError):
 
 
 def get_engine() -> Engine:
-    """引擎懒加载：MOCK 与真实引擎同契约，只有这里知道具体实现类。
+    """引擎懒加载：三种实现同契约，只有这里知道具体实现类。
 
-    `MOCK_ENGINE` 三态（见 `app/config.py`）：
-    - `1`：强制 MOCK，用于演示兜底与本地回归；
-    - `0`：强制 MetaGPT，装不上就抛 RuntimeError（不静默降级，避免"以为在用真模型"）；
-    - 留空：auto，能导入 metagpt 就用真实引擎，否则降级 MOCK 并记一条 warning。
+    选择顺序（见 `app/config.py` 的 `_engine_mode`）：
+    - `ENGINE_MODE=llm`：强制 LLM，未配置 LLM_* 直接抛 RuntimeError（不静默降级）；
+    - `ENGINE_MODE=metagpt` / `MOCK_ENGINE=0`：强制 MetaGPT，装不上同样抛错；
+    - `ENGINE_MODE=mock` / `MOCK_ENGINE=1`：强制 MOCK，演示兜底；
+    - 留空 / `auto`：LLM 配置齐全就用 LLM，否则能导入 metagpt 就用 MetaGPT，最后降级 MOCK。
+
+    显式指定时不降级，是为了避免"以为在用真模型、其实在跑模板"。
     """
     global _engine
     if _engine is not None:
         return _engine
 
-    if settings.engine_mode == ENGINE_MODE_MOCK:
+    mode = settings.engine_mode
+    if mode == ENGINE_MODE_MOCK:
         _engine = MockEngine()
+        return _engine
+
+    if mode == ENGINE_MODE_LLM:
+        _engine = _build_llm_engine()
         return _engine
 
     # 只在函数内导入：模块本身不依赖 metagpt，没装依赖的环境也能启动服务
     from app.engine.metagpt_engine import MetaGPTEngine, metagpt_available
 
-    if settings.engine_mode == ENGINE_MODE_METAGPT:
+    if mode == ENGINE_MODE_METAGPT:
         _engine = MetaGPTEngine()
+        return _engine
+
+    if settings.llm_configured:
+        _engine = _build_llm_engine()
         return _engine
 
     available, detail = metagpt_available()
     if available:
         _engine = MetaGPTEngine()
     else:
-        log.warning("未检测到 MetaGPT（%s），自动降级为 MOCK 引擎", detail)
+        log.warning(
+            "未配置 LLM（LLM_BASE_URL/LLM_MODEL/LLM_API_KEY）且未检测到 MetaGPT（%s），"
+            "自动降级为 MOCK 引擎",
+            detail,
+        )
         _engine = MockEngine()
     return _engine
+
+
+def _build_llm_engine() -> Engine:
+    """构造 LLM 引擎；配置缺失时把原因原样抛出，由 /health 显示 unavailable。"""
+    from app.engine.llm_engine import LLMEngine
+
+    return LLMEngine()
 
 
 def engine_name() -> str:
@@ -192,13 +216,37 @@ def _finish_success(task_id: str, workdir: Path) -> None:
     收尾直接放弃写元数据（产物目录仍保留，便于排查）。
     """
     result = scan_artifacts(workdir)
+    title = _version_title(workdir, task_id)
     if not db.set_status(task_id, models.STATUS_SUCCEEDED, stage="checking"):
         log.info("任务在收尾前已进入终态，跳过产物落库 id=%s", task_id)
         return
     for rel, kind, size in result.files:
         db.add_artifact(task_id, rel, kind, size)
+    db.set_version_title(task_id, title)
     db.add_event(task_id, models.STATUS_SUCCEEDED)
-    log.info("任务成功 id=%s 入口=%s 文件数=%d", task_id, result.entry, len(result.files))
+    log.info(
+        "任务成功 id=%s 版本名=%r 入口=%s 文件数=%d",
+        task_id,
+        title,
+        result.entry,
+        len(result.files),
+    )
+
+
+def _version_title(workdir: Path, task_id: str) -> str:
+    """版本名优先取引擎写的 `meta.json.title`（LLM 引擎会写简报里的目标），
+    其次退回用户这一轮的原话前 16 字，保证卡片永远有个能读的名字。"""
+    title = ""
+    meta = workdir / "meta.json"
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+        title = str(data.get("title") or "").strip()
+    except (OSError, json.JSONDecodeError):
+        title = ""
+    if not title:
+        task = db.get_task(task_id)
+        title = " ".join((task.prompt if task else "").split())[:16]
+    return title[:40] or "生成应用"
 
 
 def _finish_failure(task_id: str, message: str) -> None:
