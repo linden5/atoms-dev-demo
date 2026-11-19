@@ -2,6 +2,7 @@
 # 一条命令完成启动 + 校验：
 #   bash scripts/restart_and_verify.sh <档位>
 # 默认流程 = 同步代码与依赖（deploy.sh）→ 停旧服务 → 按档位启动 → 健康检查 → 模型连通冒烟。
+# 服务未安装时（首次部署）会自动先执行 deploy.sh 装好 systemd 单元再继续。
 # 档位必须显式指定（dev / strong …），启动前先打印该档位使用的模型。
 # 校验任何一步失败都立即停下（非零退出），不在半可用状态继续。
 #
@@ -33,7 +34,7 @@ usage() {
 
 档位必须显式指定（dev / strong …），启动前会打印该档位使用的模型。
 可选参数：
-  --no-deploy  跳过 deploy.sh（不拉代码，只切档重启）
+  --no-deploy  跳过 deploy.sh（不拉代码不安装；服务未装时也不会自动安装）
   --full       追加最新步骤的 verify_sN.sh 全量验收
   --no-smoke   跳过模型连通冒烟
 USAGE
@@ -108,7 +109,7 @@ json_field() {  # 从 FastAPI 的紧凑 JSON 里抠字符串字段
 }
 
 main() {
-  local PROFILE="" FULL=0 SMOKE=1 DEPLOY=1 health engine model prof prev verify_script
+  local PROFILE="" FULL=0 SMOKE=1 DEPLOY=1 FRESH=0 health engine model prof prev verify_script
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -136,13 +137,21 @@ main() {
     die "没找到 systemctl：本脚本面向 systemd 部署；本地开发直接 LLM_PROFILE=<档位> python -m uvicorn app.main:app --port 8000"
   fi
   if ! systemctl cat "$SERVICE" >/dev/null 2>&1; then
-    die "systemd 里没有 $SERVICE 服务：先执行 bash scripts/deploy.sh 安装"
+    if [ "$DEPLOY" -eq 1 ]; then
+      warn "systemd 里没有 $SERVICE 服务：自动执行 deploy.sh 首次安装"
+      printf '\n== 0/4 首次安装（deploy.sh）==\n'
+      bash "$SCRIPT_DIR/deploy.sh" || die "deploy.sh 失败，服务未安装"
+      systemctl cat "$SERVICE" >/dev/null 2>&1 || die "deploy.sh 执行后仍找不到 $SERVICE 服务单元"
+      FRESH=1
+    else
+      die "systemd 里没有 $SERVICE 服务：先执行 bash scripts/deploy.sh 安装（或去掉 --no-deploy 让本脚本自动安装）"
+    fi
   fi
   [ -n "$PYBIN" ] || die "找不到 python3/python：模型冒烟需要它"
 
   prev="$(get_current_profile)"
 
-  if [ "$DEPLOY" -eq 1 ]; then
+  if [ "$DEPLOY" -eq 1 ] && [ "$FRESH" -eq 0 ]; then
     printf '\n== 0/4 同步代码与依赖（deploy.sh）==\n'
     bash "$SCRIPT_DIR/deploy.sh" || die "deploy.sh 失败，未切档"
   fi
