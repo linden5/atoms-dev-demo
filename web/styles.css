@@ -95,6 +95,16 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 9px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.brand:hover .brand__name {
+  color: var(--accent-1);
 }
 
 .brand__mark {

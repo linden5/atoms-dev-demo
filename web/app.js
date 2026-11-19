@@ -33,6 +33,7 @@
 
   const el = {
     version: document.getElementById('version-tag'),
+    brand: document.getElementById('brand-home-btn'),
     taskCount: document.getElementById('task-count'),
     statusWrap: document.getElementById('status-indicator'),
     statusText: document.querySelector('.status__text'),
@@ -1433,6 +1434,10 @@
     }
 
     if (el.homeBack) el.homeBack.addEventListener('click', function () {
+      showView('home');
+    });
+
+    if (el.brand) el.brand.addEventListener('click', function () {
       showView('home');
     });
 
