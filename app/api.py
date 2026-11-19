@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app import STEP, db, models, tasks, __version__
+from app import STEP, db, llm_cache, models, tasks, __version__
 from app.config import ENGINE_MODE_LLM, settings
 
 router = APIRouter()
@@ -61,7 +61,10 @@ async def health() -> dict:
         "engine": engine,
         # 只回显模型名，不回显 Key 与端点地址
         "model": settings.llm_model if engine == ENGINE_MODE_LLM else "",
+        # 能力档只报名字，档位文件路径与其中的密钥一律不下发
+        "profile": settings.llm_profile,
         "engine_mode": settings.engine_mode,
+        "cache": llm_cache.summary(),
         "uptime_s": round(time.monotonic() - _STARTED_AT, 3),
         "python": platform.python_version(),
         "time": _now(),
