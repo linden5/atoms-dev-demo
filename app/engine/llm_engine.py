@@ -90,18 +90,19 @@ class LLMEngine:
             PLAN_PROMPT,
             {"requirement": prompt},
             max_tokens=900,
+            emit=emit,
         )
 
         # 2) 编码：出单文件应用，不合格就带着原因重试一次
         await emit("coding")
-        html, problems = await self._build_html(prompt, brief)
+        html, problems = await self._build_html(prompt, brief, emit)
 
         # 3) 自检：结构化 review，有问题再修一次（不无限重试，避免演示时越修越慢）
         await emit("checking")
-        issues = await self._review(html, prompt)
+        issues = await self._review(html, prompt, emit)
         fixed = False
         if issues:
-            candidate = await self._fix(html, issues)
+            candidate = await self._fix(html, issues, emit)
             fixed = candidate != html
             html = candidate
 
@@ -146,7 +147,7 @@ class LLMEngine:
 
     # ---------- 三个阶段 ----------
 
-    async def _build_html(self, prompt: str, brief: str) -> tuple[str, list[str]]:
+    async def _build_html(self, prompt: str, brief: str, emit: EmitFn) -> tuple[str, list[str]]:
         """编码 + 体检 + 重试。两次都不合格才抛错，错误信息写成人话。"""
         problems: list[str] = []
         text = ""
@@ -154,12 +155,14 @@ class LLMEngine:
             extra = ""
             if problems:
                 extra = "\n\n上一次输出不合格：" + "；".join(problems) + "。请重新输出完整 HTML。"
+                await emit(f"第 {attempt} 次编码不合格，重试中：{problems[-1]}")
             text = await self._step(
                 "coding",
                 CODE_PROMPT,
                 {"brief": brief.strip(), "requirement": prompt},
                 max_tokens=settings.llm_max_tokens,
                 suffix=extra,
+                emit=emit,
             )
             html = extract_html(text)
             ok, why = inspect_html(html)
@@ -173,7 +176,7 @@ class LLMEngine:
             "可以再试一次，或把需求写得更具体（例如说明要哪些控件）。"
         )
 
-    async def _review(self, html: str, prompt: str) -> list[str]:
+    async def _review(self, html: str, prompt: str, emit: EmitFn) -> list[str]:
         """返回需要修正的问题列表；解析失败按"没有问题"处理，不阻断交付。
 
         温度用 0.01 而不是 0：部分厂商（如智谱的 OpenAI 兼容模式）明确不接受
@@ -186,6 +189,7 @@ class LLMEngine:
                 {"html": html},
                 max_tokens=600,
                 temperature=REVIEW_TEMPERATURE,
+                emit=emit,
             )
         except RuntimeError as exc:  # 审查本身失败不该让整个任务失败
             log.warning("自检调用失败，跳过：%s", exc)
@@ -206,15 +210,17 @@ class LLMEngine:
             issues.append("页面里还有未替换的占位内容")
         return issues[:ISSUE_LIMIT]
 
-    async def _fix(self, html: str, issues: list[str]) -> str:
+    async def _fix(self, html: str, issues: list[str], emit: EmitFn) -> str:
         """带问题清单重写一次；修完仍不合格就保留原稿（宁可原稿能跑）。"""
         bullet = "\n".join(f"- {item}" for item in issues)
+        await emit(f"自检发现 {len(issues)} 个问题，修正中")
         try:
             text = await self._step(
                 "checking",
                 FIX_PROMPT,
                 {"issues": bullet, "html": html},
                 max_tokens=settings.llm_max_tokens,
+                emit=emit,
             )
         except RuntimeError as exc:
             log.warning("修正调用失败，保留原稿：%s", exc)
@@ -239,6 +245,7 @@ class LLMEngine:
         max_tokens: int,
         temperature: float | None = None,
         suffix: str = "",
+        emit: EmitFn | None = None,
     ) -> str:
         """渲染模板 → 查缓存 → 未命中才调 chat/completions → 记录耗时与 token。"""
         content = render(template, **values) + suffix
@@ -252,7 +259,9 @@ class LLMEngine:
             text, usage = cached, {}
             log.info("缓存命中 stage=%s chars=%d", stage, len(cached))
         else:
-            text, usage = await self._chat(content, max_tokens=max_tokens, temperature=temperature)
+            text, usage = await self._chat(
+                content, max_tokens=max_tokens, temperature=temperature, emit=emit
+            )
             llm_cache.store(
                 key=key,
                 namespace="llm",
@@ -301,6 +310,7 @@ class LLMEngine:
         *,
         max_tokens: int,
         temperature: float | None = None,
+        emit: EmitFn | None = None,
     ) -> tuple[str, dict[str, Any]]:
         payload = {
             "model": self.model,
@@ -333,6 +343,9 @@ class LLMEngine:
                 if not _retryable(exc) or attempt == MAX_ATTEMPTS:
                     break
                 log.warning("LLM 调用失败（第 %d 次）：%s，%.1fs 后重试", attempt, last_error, RETRY_BACKOFF_S)
+                if emit is not None:
+                    # 调用级进度：让前端在长等待时能看到"重试中"而不是干等
+                    await emit(f"调用失败（第 {attempt} 次），{RETRY_BACKOFF_S:.0f}s 后重试：{last_error}")
                 await asyncio.sleep(RETRY_BACKOFF_S)
         raise RuntimeError(last_error)
 
