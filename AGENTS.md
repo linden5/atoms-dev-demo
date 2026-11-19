@@ -14,6 +14,7 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 | [docs/design.md](docs/design.md) | 涉及接口契约、数据模型、状态机、安全策略时；实现与它冲突时以它为准 |
 | **[docs/agent/git-commit.md](docs/agent/git-commit.md)** | **任何 git 提交之前必读**，提交信息必须符合该规范 |
 | [docs/setup.md](docs/setup.md) / [docs/setup-windows.md](docs/setup-windows.md) | 需要装环境、跑服务、查端口时 |
+| [docs/dev-debug.md](docs/dev-debug.md) | 改完代码怎么验证、问题在哪一层、引擎怎么排障 |
 | `docs/steps/sN.md` | 了解某一步具体改了什么、怎么部署与回滚 |
 
 ## 提交规范（摘要，完整版见 docs/agent/git-commit.md）

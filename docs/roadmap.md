@@ -194,5 +194,6 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | [design.md](design.md) | 架构与契约的权威来源；实现有冲突时以它为准 |
 | [roadmap.md](roadmap.md) | 本文档：执行顺序、验收标准、进度 |
 | [setup.md](setup.md) / [setup-windows.md](setup-windows.md) | 环境搭建（uv / Python 3.11 / LLM 配置） |
+| [dev-debug.md](dev-debug.md) | 开发与调试方式：分层验证、引擎排障、多轮与版本链自检 |
 | `docs/steps/sN.md` | 每步落地后补写：改了什么、怎么部署、怎么回滚 |
 | `docs/delivery.md` | 最终交付说明（S6 产出） |
