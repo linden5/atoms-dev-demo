@@ -53,12 +53,12 @@
 | `web` | `web/` 前端页面与样式 |
 | `api` | `app/api.py` 路由与契约 |
 | `tasks` | `app/tasks.py` 编排、状态机 |
-| `engine` | `app/engine/`（base / mock / metagpt） |
+| `engine` | `app/engine/`（base / mock / llm / metagpt） |
 | `db` | `app/db.py`、`app/models.py`、表结构 |
 | `deploy` | `deploy/`、systemd、端口 |
 | `scripts` | `scripts/` 下的部署与验收脚本 |
 | `docs` | `docs/` 下的文档 |
-| `s1`…`s6` | 仅用于「整步收尾」的提交，跨多个模块时使用 |
+| `s1`…`s8` | 仅用于「整步收尾」的提交，跨多个模块时使用 |
 
 一个提交只影响一个 scope；跨模块改动请拆成多个提交。
 

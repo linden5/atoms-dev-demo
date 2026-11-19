@@ -86,8 +86,9 @@ git checkout s5 && bash scripts/deploy.sh
 | [docs/steps/](docs/steps/) | 每步落地记录：改了什么 / 怎么部署 / 怎么验收 / 怎么回滚 |
 | [docs/setup.md](docs/setup.md) · [docs/setup-windows.md](docs/setup-windows.md) | Linux / Windows 环境搭建 |
 | [docs/dev-debug.md](docs/dev-debug.md) | 开发与调试方式：分层验证、引擎排障、多轮与版本链自检 |
+| [docs/agent/discipline.md](docs/agent/discipline.md) | 开发纪律（硬性约束 / 禁止事项 / 工作流，唯一出处） |
 | [docs/agent/git-commit.md](docs/agent/git-commit.md) | 提交规范（type/scope、拆分要求） |
-| [AGENTS.md](AGENTS.md) | 给 AI 协作者的约定与当前状态 |
+| [AGENTS.md](AGENTS.md) | 给 AI 协作者的入口：概览、必读索引与当前状态 |
 
 ## 目录结构
 

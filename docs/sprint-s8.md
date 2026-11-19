@@ -251,4 +251,4 @@ curl -s -X POST localhost:8000/api/tasks/$TASK/publish -d '{"slug":"BadSlug"}'  
 | [roadmap.md](roadmap.md) | S1–S7 为已交付步骤；S8 见本文档，落地后补 `docs/steps/s8.md` 并入进度表 |
 | [design.md](design.md) | 接口契约与状态机的权威来源；T1/T3 新增接口落地后需回写 |
 | [delivery.md](delivery.md) | 交付说明；本轮结束后更新"真实生成"与"公网可达"两项状态 |
-| [AGENTS.md](../AGENTS.md) | 硬性约束：单 worker、schema 只增不改、路径穿越校验、sandbox 不加 `allow-same-origin`、端口与部署形态不变 |
+| [agent/discipline.md](agent/discipline.md) | 硬性约束与禁止事项（纪律唯一出处）：单 worker、schema 只增不改、路径穿越校验、sandbox 不加 `allow-same-origin`、端口与部署形态不变 |

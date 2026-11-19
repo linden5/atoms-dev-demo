@@ -160,6 +160,7 @@ curl -s localhost:8000/api/tasks/<tid>/versions    # 版本链
 
 ## 8. 从调试到提交
 
+0. **真实生成的产物一律不删**。只要这次调用打到了真模型（不是 `--fake-metagpt` / `fake_llm.py` / MOCK），产物目录就是唯一证据：脚本触发看 `[产物] <绝对路径>`，服务端触发看日志 `产物目录=<绝对路径>`；要重跑就换新目录或新 prompt。完整规则见 [agent/discipline.md](agent/discipline.md)
 1. 对应步骤的验收脚本通过：`BASE_URL=http://127.0.0.1:8000 bash scripts/verify_sN.sh`
 2. 涉及交互的改动，用真实浏览器走一遍主链路（curl 200 不算通过）
 3. `git status` 复核，确认没夹带 `workspace/`、`data/`、`logs/`、`__pycache__/` 与任何密钥
