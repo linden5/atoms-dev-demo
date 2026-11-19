@@ -21,7 +21,9 @@ _CLOSING = re.compile(r"</html\s*>", re.I)
 _INTERACTIVE = re.compile(r"<(script|style)[\s>]", re.I)
 # 预览 CSP 只放行 'self' / inline / data / blob，外链资源会被浏览器拦掉
 _EXTERNAL_REF = re.compile(r"""<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)\s*=\s*["']https?://""", re.I)
-_PLACEHOLDER = re.compile(r"\[(?:[A-Za-z][A-Za-z /&'-]{2,20})\]|lorem ipsum", re.I)
+# 占位符：[Company name] / [Lorem ipsum] 之类。负向后行断言排除合法代码里的
+# 下标取值（tokens[pos]、arr[i]），否则自检会"修正"根本不存在的问题
+_PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_$\]])\[(?:[A-Za-z][A-Za-z /&'-]{2,20})\]|(?<![A-Za-z0-9_$\]])lorem ipsum", re.I)
 # 预览 iframe 是 opaque origin（无 allow-same-origin），访问存储 API 会直接抛 SecurityError
 _STORAGE = re.compile(r"\b(?:localStorage|sessionStorage|document\.cookie)\b")
 
