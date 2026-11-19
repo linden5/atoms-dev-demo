@@ -13,8 +13,10 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 from app import STEP, __version__, db, security, tasks
 from app.api import router as api_router
@@ -82,6 +84,24 @@ app = FastAPI(
 
 security.install(app)
 app.include_router(api_router)
+
+
+class NoCacheHtmlMiddleware(BaseHTTPMiddleware):
+    """静态资源强制走协商缓存。
+
+    静态文件默认只有 ETag/Last-Modified，没有 Cache-Control，浏览器会启发式缓存，
+    前端更新后用户端仍可能读到旧 CSS/JS 导致页面错乱。这里统一补 `no-cache`：
+    每次都带 ETag 回源校验，文件没变仍是 304，不会浪费流量。
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        response = await call_next(request)
+        if "cache-control" not in response.headers:
+            response.headers["cache-control"] = "no-cache"
+        return response
+
+
+app.add_middleware(NoCacheHtmlMiddleware)
 
 # 挂载放在路由之后：显式路由优先匹配，其余交给静态文件
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
