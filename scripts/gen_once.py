@@ -11,6 +11,12 @@
     python scripts/gen_once.py "做一个待办清单" --engine mock
     python scripts/gen_once.py "做一个记账面板" --engine metagpt --timeout 900
     python scripts/gen_once.py "验证失败路径" --fail
+
+没有 MetaGPT 依赖时，用假包验证引擎交互（引擎代码仍是真实路径）：
+    python scripts/gen_once.py "做一个计数器" --fake-metagpt success
+    python scripts/gen_once.py "验证抽取失败" --fake-metagpt no_html
+    python scripts/gen_once.py "验证 LLM 回退" --fake-metagpt role_broken
+    python scripts/gen_once.py "验证超时" --fake-metagpt slow:3 --timeout 1
 """
 
 from __future__ import annotations
@@ -25,6 +31,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
 
 from app.config import ENGINE_MODE_AUTO, ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings  # noqa: E402
 from app.engine.base import EmitFn  # noqa: E402
@@ -64,6 +74,12 @@ def build_engine(choice: str):
 
 
 async def generate(args: argparse.Namespace) -> int:
+    if args.fake_metagpt:
+        import fake_metagpt
+
+        version = fake_metagpt.install(args.fake_metagpt)
+        print(f"[info] 已注入假 metagpt {version} scenario={args.fake_metagpt}", flush=True)
+
     if args.fail:
         engine = FailingEngine()
     else:
@@ -112,6 +128,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", help="产物目录，默认 workspace/cli_<时间戳>")
     parser.add_argument("--timeout", type=int, default=settings.task_timeout, help="超时秒数，默认同 TASK_TIMEOUT")
     parser.add_argument("--fail", action="store_true", help="故障注入：让引擎直接抛异常，用于验证失败路径")
+    parser.add_argument(
+        "--fake-metagpt",
+        metavar="SCENARIO",
+        help="注入假 metagpt（success / no_html / role_broken / slow:3），无需真实依赖即可验证引擎交互",
+    )
     return parser.parse_args(argv)
 
 

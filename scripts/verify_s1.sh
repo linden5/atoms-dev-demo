@@ -66,13 +66,14 @@ expect_contains "页面标题包含 Atoms Demo" "${BASE_URL}/" "Atoms Demo"
 expect_contains "存在需求输入框" "${BASE_URL}/" 'id="requirement-input"'
 expect_contains "存在预览 iframe" "${BASE_URL}/" 'id="preview-frame"'
 expect_contains "iframe 启用 sandbox 隔离" "${BASE_URL}/" 'sandbox="allow-scripts"'
-expect_contains "存在任务列表容器" "${BASE_URL}/" 'id="task-list"'
+expect_contains "存在会话列表容器" "${BASE_URL}/" 'id="session-list"'
 expect_contains "存在示例 prompt 快捷入口" "${BASE_URL}/" 'data-prompt='
 
 expect_contains "样式表可访问且含设计变量" "${BASE_URL}/styles.css" "--accent-0"
 # S1 的演示数据在 S3 被真实接口取代，因此这里只断言"页面脚本能提交需求"，
 # 不写死 DEMO_TASKS：否则 S3 起的全量回归会误报。
-expect_contains "脚本可访问且包含提交逻辑" "${BASE_URL}/app.js" "/api/generate"
+# S7 起提交入口从 /api/generate 换成会话消息接口，断言跟着契约走。
+expect_contains "脚本可访问且包含提交逻辑" "${BASE_URL}/app.js" "/api/sessions/"
 expect_contains "脚本包含失败态处理" "${BASE_URL}/app.js" "errorBanner"
 
 printf '\n结果：%d 通过 / %d 失败\n' "$PASS" "$FAIL"
