@@ -42,8 +42,22 @@ class MockEngine:
         await asyncio.sleep(0.4)
 
 
+_CONTEXT_MARKER = "请基于以上对话实现最终需求："
+_CONTEXT_TAIL = "。只输出单文件 HTML。"
+
+
+def _requirement_of(prompt: str) -> str:
+    """多轮时 prompt 是拼好的上下文，演示页只回显最后那一句需求，避免正文变成对话记录。"""
+    text = (prompt or "").strip()
+    if _CONTEXT_MARKER in text:
+        text = text.rsplit(_CONTEXT_MARKER, 1)[1]
+    return text.split(_CONTEXT_TAIL)[0].strip() or text[:200]
+
+
 def _html(prompt: str, task_id: str) -> str:
-    safe_prompt = html.escape(prompt)
+    safe_prompt = html.escape(_requirement_of(prompt))
+    turns = (prompt or "").count("用户：")
+    note = f"引擎输入 {len(prompt or '')} 字符" + (f" · {turns} 轮上下文" if turns else "")
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -70,7 +84,7 @@ def _html(prompt: str, task_id: str) -> str:
     </div>
   </section>
 
-  <p class="foot">本页由 MOCK 引擎写入 <code>workspace/{task_id}/</code>，S4 起由 MetaGPT 真实生成。</p>
+  <p class="foot">{html.escape(note)} · 本页由 MOCK 引擎写入 <code>workspace/{task_id}/</code>，S4 起由 MetaGPT 真实生成。</p>
 </main>
 <script src="app.js" defer></script>
 </body>
