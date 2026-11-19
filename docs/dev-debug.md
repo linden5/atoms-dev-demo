@@ -149,6 +149,8 @@ curl -s localhost:8000/api/tasks/<tid>/versions    # 版本链
 | 顶栏显示 `引擎 MOCK`，但你以为在用真实引擎 | `ENGINE_MODE` 是否为 `mock`（或旧的 `MOCK_ENGINE=1`）；`/health` 里的 `engine` 字段 |
 | 切换了档位但模型没变 | 是否重启、`/health` 的 `profile` 是否等于目标档位；`systemctl show atoms -p Environment` 看 drop-in 是否写入 |
 | 同一需求第二次明显变快 | 大概率是缓存命中，看 `meta.json` 的 `cache_hits`；要验证真实调用用 `LLM_CACHE=0` |
+| MOCK 下 `/health` 的 `cache.enabled=false` | 正常：MOCK 不调模型，缓存不参与，如实上报 |
+| MOCK 启动日志有档位相关 WARN | 正常：MOCK 时档位问题只告警不阻断；切真实引擎前必须补齐 |
 | 提交后一直 `pending` | 是否多 worker 启动（必须单 worker）；`logs/app.log` 有无入队记录 |
 | 任务 `succeeded` 但预览空白 | `workspace/{task_id}/` 里有没有入口 HTML；`scan_artifacts` 的入口判定 |
 | `/files/{path}` 返回 404 | 路径是否真的在 `workspace/{task_id}/` 下（越界一律 404，不是 bug） |
