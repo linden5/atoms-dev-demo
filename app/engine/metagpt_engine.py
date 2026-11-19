@@ -180,12 +180,13 @@ class MetaGPTEngine:
             encoding="utf-8",
         )
         log.info(
-            "MetaGPT 生成完成 task=%s mode=%s chars=%d cache_hits=%d elapsed=%.1fs",
+            "MetaGPT 生成完成 task=%s mode=%s chars=%d cache_hits=%d elapsed=%.1fs 产物目录=%s",
             task_id,
             mode,
             len(html),
             self.cache_hits,
             asyncio.get_running_loop().time() - started,
+            workdir.resolve(),
         )
 
         await emit("checking")

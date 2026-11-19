@@ -191,7 +191,12 @@ async def _run(task_id: str, engine_prompt: str) -> None:
         _finish_failure(task_id, f"{type(exc).__name__}: {exc}")
     finally:
         _running.pop(task_id, None)
-        log.info("任务结束 id=%s 耗时=%.1fs", task_id, time.perf_counter() - started)
+        log.info(
+            "任务结束 id=%s 耗时=%.1fs 产物目录=%s",
+            task_id,
+            time.perf_counter() - started,
+            workdir,
+        )
 
 
 async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path, prompt: str) -> None:
