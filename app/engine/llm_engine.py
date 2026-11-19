@@ -18,12 +18,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+from app import llm_cache
 from app.config import settings
 from app.engine.base import EmitFn
 from app.engine.html_utils import (
@@ -66,6 +68,7 @@ class LLMEngine:
         self.model = settings.llm_model
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.steps: list[dict[str, Any]] = []
+        self.cache_hits = 0
 
     # ---------- 对外入口 ----------
 
@@ -114,6 +117,8 @@ class LLMEngine:
                     "placeholders": placeholder_hits(html),
                     "tokens": self.usage,
                     "steps": self.steps,
+                    "profile": settings.llm_profile,
+                    "cache_hits": self.cache_hits,
                     "elapsed_s": round(time.perf_counter() - started, 1),
                 },
                 ensure_ascii=False,
@@ -122,11 +127,12 @@ class LLMEngine:
             encoding="utf-8",
         )
         log.info(
-            "LLM 生成完成 task=%s model=%s chars=%d issues=%d elapsed=%.1fs",
+            "LLM 生成完成 task=%s model=%s chars=%d issues=%d cache_hits=%d elapsed=%.1fs",
             task_id,
             self.model,
             len(html),
             len(issues),
+            self.cache_hits,
             time.perf_counter() - started,
         )
 
@@ -222,21 +228,58 @@ class LLMEngine:
         temperature: float | None = None,
         suffix: str = "",
     ) -> str:
-        """渲染模板 → 调一次 chat/completions → 记录耗时与 token。"""
+        """渲染模板 → 查缓存 → 未命中才调 chat/completions → 记录耗时与 token。"""
         content = render(template, **values) + suffix
+        identity = self._cache_identity(temperature, max_tokens)
+        key = llm_cache.make_key(namespace="llm", identity=identity, prompt=content)
+
+        cached = llm_cache.lookup(key)
         began = time.perf_counter()
-        text, usage = await self._chat(content, max_tokens=max_tokens, temperature=temperature)
+        if cached is not None:
+            self.cache_hits += 1
+            text, usage = cached, {}
+            log.info("缓存命中 stage=%s chars=%d", stage, len(cached))
+        else:
+            text, usage = await self._chat(content, max_tokens=max_tokens, temperature=temperature)
+            llm_cache.store(
+                key=key,
+                namespace="llm",
+                identity=identity,
+                prompt=content,
+                raw=text,
+                meta={"stage": stage, "model": self.model},
+            )
+
         self.steps.append(
             {
                 "stage": stage,
                 "ms": round((time.perf_counter() - began) * 1000),
                 "chars": len(text or ""),
                 "tokens": usage.get("total_tokens", 0),
+                "cached": cached is not None,
             }
         )
-        for key in self.usage:
-            self.usage[key] += int(usage.get(key) or 0)
+        for name in self.usage:
+            self.usage[name] += int(usage.get(name) or 0)
         return text
+
+    def _cache_identity(self, temperature: float | None, max_tokens: int) -> str:
+        """缓存身份：换档位、换模型、换端点、换采样参数都必须重新生成。
+
+        少任何一项都会出现"切了档位却拿到上一档输出"的假象，那比不缓存更糟。
+        """
+        return "|".join(
+            (
+                f"engine={self.name}",
+                f"profile={settings.llm_profile or '-'}",
+                f"model={settings.llm_model}",
+                f"base={settings.llm_base_url}",
+                f"temp={settings.llm_temperature if temperature is None else temperature}",
+                f"max_tokens={max_tokens}",
+                # 测试可用 ATOMS_CACHE_TAG 隔离不同场景，正常部署留空
+                f"tag={os.getenv('ATOMS_CACHE_TAG') or '-'}",
+            )
+        )
 
     async def _chat(
         self,
