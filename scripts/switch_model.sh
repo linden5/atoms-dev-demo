@@ -125,12 +125,19 @@ cmd_check() {
 
   local owner
   owner="$(stat -c '%U' "$file" 2>/dev/null || echo '')"
-  if [ -n "$owner" ] && [ "$owner" != "$SERVICE_USER" ]; then
-    warn "属主是 $owner，服务以 $SERVICE_USER 运行时会读不到（chown $SERVICE_USER:$SERVICE_USER）"
+  if [ "$owner" = "root" ]; then
+    # systemd 由 PID1 读取 EnvironmentFile，属主 root + 600 是可用且更严的形态
+    ok "属主 root：由 systemd 注入变量，应用不需要读该文件"
+  elif [ -n "$owner" ] && [ "$owner" != "$SERVICE_USER" ]; then
+    warn "属主是 $owner，服务用户 $SERVICE_USER 读不到；systemd 注入无妨，但应用自行装载档位会失败"
   fi
 
   if grep -qE '^LLM_BASE_URL=.*[^/]$' "$file" && ! grep -qE '^LLM_BASE_URL=.*/v[0-9]+$' "$file"; then
     warn 'LLM_BASE_URL 看起来没有以 /v1 结尾，多数 OpenAI 兼容端点需要它'
+  fi
+
+  if grep -qE '^ENGINE_MODE=' "$file"; then
+    warn "档位里写了 ENGINE_MODE=$(var_value "$file" ENGINE_MODE)，它会覆盖 unit 的设置；不需要就不要写"
   fi
 
   printf '\n'
@@ -245,7 +252,9 @@ cmd_init() {
   cat >"$file" <<EOF
 # 能力档：$name
 # 这里放的是密钥，权限 600、不要进版本控制。
-ENGINE_MODE=llm
+# 刻意不写 ENGINE_MODE：unit 里的 ENGINE_MODE= 会被这里覆盖（EnvironmentFile 后应用），
+# 容易把 MOCK 兜底顶回真实引擎。不写则按 auto 推断：LLM_* 配齐就用 LLM。
+# ENGINE_MODE=llm
 LLM_BASE_URL=https://replace-me/v1
 LLM_MODEL=replace-me
 LLM_API_KEY=sk-replace-me
