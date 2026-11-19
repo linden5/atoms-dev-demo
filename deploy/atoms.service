@@ -1,13 +1,14 @@
-; S2 版本：uvicorn 单 worker 提供 /health + web/ 静态托管
+; Atoms Demo systemd unit 模板：占位符 @SERVICE@ / @APP_DIR@ / @PORT@ 由 scripts/deploy.sh 渲染后写入 /etc/systemd/system/<服务名>.service
+; 直接编辑本文件不会生效，改完要重新跑 deploy.sh。
 ; 单 worker 是硬性约束：S3 起任务队列与并发信号量都在进程内，多 worker 会导致状态不一致
 [Unit]
-Description=Atoms Demo
+Description=Atoms Demo (@SERVICE@)
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/atoms-dev-demo
+WorkingDirectory=@APP_DIR@
 Environment=PYTHONUNBUFFERED=1
 ; 引擎选择（S8 起）：ENGINE_MODE=llm|mock|metagpt|auto，留空等同 auto
 ;   auto = LLM 三项配齐用 LLM → 能导入 MetaGPT 用 MetaGPT → 否则降级 MOCK
@@ -19,12 +20,14 @@ Environment=PYTHONUNBUFFERED=1
 ; EnvironmentFile=/etc/atoms/llm.env
 ;
 ; 能力档切换：不要改本文件，用 scripts/switch_model.sh <档位>。
-; 它在 /etc/systemd/system/atoms.service.d/ 下写 drop-in，注入 3 行：
+; 它在 /etc/systemd/system/<服务名>.service.d/ 下写 drop-in，注入 3 行：
 ;   Environment=LLM_PROFILE=<档位>       # 只用于 /health 展示与日志
 ;   Environment=LLM_PROFILE_DIR=<目录>   # 档位目录，默认 ~/.atoms/llm
 ;   EnvironmentFile=<目录>/<档位>.env    # 密钥只存在这里
-; 切回默认：删掉 drop-in 后 systemctl daemon-reload && systemctl restart atoms
-ExecStart=/home/ubuntu/atoms-dev-demo/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
+; 多实例部署时给 switch_model.sh 传 SERVICE=<服务名> BASE_URL=http://127.0.0.1:<端口>，
+; 两个实例可各自挂不同档位；共用 PROFILE_DIR 下的档位文件也没有冲突。
+; 切回默认：删掉 drop-in 后 systemctl daemon-reload && systemctl restart <服务名>
+ExecStart=@APP_DIR@/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port @PORT@ --workers 1 --proxy-headers
 Restart=always
 RestartSec=2
 StandardOutput=journal
