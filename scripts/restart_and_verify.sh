@@ -136,12 +136,17 @@ main() {
   if ! command -v systemctl >/dev/null 2>&1; then
     die "没找到 systemctl：本脚本面向 systemd 部署；本地开发直接 LLM_PROFILE=<档位> python -m uvicorn app.main:app --port 8000"
   fi
-  if ! systemctl cat "$SERVICE" >/dev/null 2>&1; then
+  # 存在性检查与其余 systemctl 操作一样走 need_sudo：
+  # 部分服务器/容器环境非 root 直连 systemd 受限，deploy.sh 用 sudo 能装能重启，
+  # 裸 systemctl cat 却失败，会造成"装好了却说没有"的误报
+  local SUDO_CMD=""
+  SUDO_CMD="$(need_sudo)"
+  if ! $SUDO_CMD systemctl cat "$SERVICE" >/dev/null 2>&1; then
     if [ "$DEPLOY" -eq 1 ]; then
       warn "systemd 里没有 $SERVICE 服务：自动执行 deploy.sh 首次安装"
       printf '\n== 0/4 首次安装（deploy.sh）==\n'
       bash "$SCRIPT_DIR/deploy.sh" || die "deploy.sh 失败，服务未安装"
-      systemctl cat "$SERVICE" >/dev/null 2>&1 || die "deploy.sh 执行后仍找不到 $SERVICE 服务单元"
+      $SUDO_CMD systemctl cat "$SERVICE" >/dev/null 2>&1 || die "deploy.sh 执行后仍找不到 $SERVICE 服务单元"
       FRESH=1
     else
       die "systemd 里没有 $SERVICE 服务：先执行 bash scripts/deploy.sh 安装（或去掉 --no-deploy 让本脚本自动安装）"
