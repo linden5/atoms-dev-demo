@@ -189,6 +189,10 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 
 **生成缓存（`workspace/.cache/`）**：按 `sha256(schema|namespace|identity|prompt)` 落盘模型返回的**原始文本**，命中即复用、不再发请求；`identity` 含引擎、档位、模型、端点与采样参数，换档位必然不命中。只缓存文本，不缓存产物——抽取、体检、自检与修正逻辑照常执行。`LLM_CACHE=0` 关闭，`LLM_CACHE_MAX_ENTRIES` 控制条数（默认 200，按最近使用淘汰）。缓存不改变任务与版本语义：新建任务仍会新建记录，只是不再等模型。
 
+**迭代修复（revision 分支，S10）**：编排层（`app/tasks.py::start`）发现任务有 `parent_id` 且父版本入口 HTML 可读时，把父版本代码经 `Engine.run(parent_html=...)` 交给 LLM 引擎，引擎改走 `REVISION_PROMPT`（旧代码 + 用户本轮原话 → 改稿），**跳过 planning**，不再把"修复 XX"当全新需求盲重写。约束：父版本 HTML 超过 60KB 时只瘦身 `<script>` 之前的注释与空白（`_slim_parent_html`），逻辑代码绝不截断；父版本产物缺失或不可读时退回全新生成并记 warning。`Engine.run` 契约新增可选参数 `parent_html` / `requirement`（只对 LLM 引擎有意义，其余引擎忽略），向后兼容。
+
+**自检与体检（S10 强化）**：`REVIEW_PROMPT` 从 6 项结构检查扩为 8 项，新增"沙箱约束（禁 localStorage/sessionStorage/cookie，`window.__ATOMS__` 存储桥除外）"与"功能正确性（对核心交互做代表性输入走查）"，输出新增 `verified` 字段（模型自报已验证的交互），落 `meta.json` 的 `verified_interactions`。本地体检三条硬问题（外链、占位符、存储 API——`html_utils.storage_hits`）**先于模型意见且不受模型 `ok=true` 影响**，命中即触发修正。`meta.json` 新增 `review_status`：`ok` / `parse_failed`（模型输出不是 JSON）/ `call_failed`（审查调用失败）——此前解析失败完全静默，排障时分不清"审查通过"还是"审查没跑"。
+
 选择单角色而非 `Team` 全流程：全流程不可控且更慢，Web 场景需要的是"一次可复现的生成"，不是多角色编排本身。多角色观感通过前端阶段卡片呈现。
 
 ### 4.4 产物管理
@@ -201,8 +205,10 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 - 安全：
   - `/files/{path}` 必须 `Path.resolve()` 后校验前缀仍在任务目录内，阻断路径穿越；
   - 预览响应带 CSP：`default-src 'self' 'unsafe-inline' data: blob:`，禁止生成物外联任意脚本；
-  - iframe 使用 `sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-autoplay
+  - iframe 使用 `sandbox="allow-scripts allow-forms allow-modals allow-downloads
     allow-orientation-lock"`，**不加** `allow-same-origin`，隔离生成代码与主站。
+    S10 修正：`allow-autoplay` 不是合法 sandbox 旗标（autoplay 归 Permissions Policy 管，
+    不归沙箱），浏览器会忽略它并报 "invalid sandbox flag"，已移除。
     allow-forms 是 S9 实测补上的：生成的表单类应用（记账/待办）普遍靠 `<form>` 提交，
     无此权限时浏览器在 submit 事件**触发前**就拦截，点"添加"毫无反应；配套在预览 CSP 加
     `form-action 'self'`，防止 form POST 外传数据（fetch 外联已被 connect-src 拦住）。
@@ -291,6 +297,8 @@ CREATE TABLE task_data (
 版本链用 `parent_id` 表达：一次"继续修改"= 新建任务并指向父任务，不复制旧产物。回滚 = 前端把某个历史版本设为当前预览目标（不改数据），需要"设为当前"时在 `tasks` 之外不动，由前端记住 `current_task_id`。
 
 S7 起版本链的父节点来源变了：不再由前端点"继续修改"，而是**会话里最近一次成功产物**（`db.last_generated_task`）。也就是说"在同一会话里继续说"就自动成为下一个版本，跨会话不会串版本。
+
+S10 加了提示词指定版本的口子：用户消息里显式引用版本时，父节点改用被指的版本（从那里分叉）。**规则先行**（`planner.parse_version_ref`：`v2` / `第2版` / `版本2` / `上一版`，编号与 `/versions` 的 v1…vN 一致，零成本零延迟）；规则未命中但话里疑似有指代（`planner.looks_like_version_reference`）时才花**一次 LLM 调用**做语义解析（`llm_engine.resolve_version_by_llm`，输入版本摘要 title+需求摘要，输出约束为 `{"version": 编号|null}`，只许选列表里存在的编号，防幻构），解析失败/越界一律回退最新版，绝不阻断生成。同一版本被"基于历史版本修改"即形成分支，分支后 `last_generated_task` 顺延到新分支节点。已知边界：需求里恰好出现 vN 字样（如"支持 v1 v2 两个视图"）会被当成版本引用——概率低，暂不做意图消歧。
 
 ### 4.6 前端
 
