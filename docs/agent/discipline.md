@@ -34,7 +34,7 @@
 - **真实生成的产物不可删除**：凡是真实调用模型产生的目录（`workspace/{task_id}/`、`workspace/cli_*/`），无论通过脚本、接口、界面还是手工触发，都**不允许删除或覆盖**——它是唯一可复现的证据；要重跑就开新目录、新 prompt
 - **生成结束必须输出产物路径**：命令行看 `[产物] <绝对路径>`，服务端看日志 `产物目录=<绝对路径>`；新增调用入口时必须带上这一行，不允许"生成完只报成功"
 - 清理只允许针对 MOCK / 假包 / 假模型产生的临时产物，且删前先确认来源
-- **预览隔离**：iframe 用 `sandbox="allow-scripts"`，不加 `allow-same-origin`
+- **预览隔离**：iframe 用 `sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-autoplay allow-orientation-lock"`，不加 `allow-same-origin`（allow-forms 是 S9 实测补的：生成应用普遍用 form 提交，无此权限点"添加"毫无反应；预览 CSP 须同时带 `form-action 'self'`。modals/downloads/autoplay/orientation 是同批补的无害体验项。新增权限须在本文与 `docs/design.md` 4.4 同步记录）
 - **DB schema 只增不改**，不删列、不改列类型，保证任意 tag 都能启动
 - **端口与部署形态不变**：始终 `0.0.0.0:8000` + systemd，不使用域名与 80/443
 - **代码跨平台**：路径统一 `pathlib.Path`，不硬编码分隔符

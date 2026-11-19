@@ -36,6 +36,7 @@
 | S6 | `s6` / `v1.0` | CSP 与 sandbox 加固、空态错误态、交付文档、全量回归 | 最终验收链路是否闭环 | 1h |
 | S7 | `s7` | 多轮对话（会话 / 消息 / 追问 / 上下文） | 会话驱动的前端状态与澄清规则 | 1h |
 | S8 | `s8`（计划） | 真实 LLM 生成（三阶段）+ 发布/分享闭环 + 版本叙事 + 公网部署 | 「AI 生成」是否为真、链接是否可被外人验收 | 8h（冲刺，见 [sprint-s8.md](sprint-s8.md)） |
+| S9 | `s9` | 应用存储（存储桥）：沙箱内生成应用的数据经平台 KV 持久化 | opaque origin 下的存储方案与安全边界 | 2h |
 
 ## 4. 各步详情
 
@@ -192,12 +193,14 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | S6 | ✅ | ✅ 23/23（FULL 模式串跑 s1–s5） | ✅ [s6.md](steps/s6.md) | ◐ 本地 curl + 浏览器通过；公网部署与真实引擎待服务器验证 | ✅ `s6` / `v1.0` |
 | S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ✅ `s7` |
 | S8 | ✅ | ✅ 38/38（s6 23/23、s7 18/18 回归通过） | ✅ [s8.md](steps/s8.md) | ✅ 公网已部署（2026-11-19，`ENGINE_MODE=llm`）；本地 `fake_llm.py` + 真实浏览器通过，`v1.1` 含 dev/strong 双档真实生成验证 | ✅ `s8` |
+| S9 | ✅ | ✅ 15/15（s8 回归 36/36 通过） | ✅ [s9.md](steps/s9.md) | ◐ 本地 curl + 真实浏览器（playwright，沙箱内 fetch 实测）通过；服务器部署待执行 | ✅ `s9` |
 
 每完成一格就更新本表，避免"看起来做完了"与"实际能演示"之间的偏差。
 
 ### 后续工作
 
 - **S8 公网部署：✅ 已完成（2026-11-19）**。公网运行 `ENGINE_MODE=llm`；后续变更用 `bash scripts/deploy_accept.sh` 发布，并用 `TARGET=public bash scripts/verify_s8.sh` 做公网回归。没有 Key 的环境可用 `python scripts/fake_llm.py` 验证引擎交互。落地记录见 [steps/s8.md](steps/s8.md)。
+- **S9 应用存储（存储桥）：✅ 本地完成（2026-11-19）**。预览沙箱禁用 localStorage（opaque origin 抛 SecurityError），生成应用的数据经 `GET/PUT /api/tasks/{id}/data` 平台代管，预览/公开页注入 `window.__ATOMS__`；存储按版本链根任务归档，迭代不丢数据。落地记录见 [steps/s9.md](steps/s9.md)。S8 验收暴露的另两个管线问题（迭代修复不带父版本代码、自检缺功能走查）在提示词层另行处理。
 - **多实例部署**：验收（main / 8000 / `atoms` / strong 档）与自测（dev / 8001 / `atoms-dev` / dev 档）分别用 `bash scripts/deploy_accept.sh` / `bash scripts/deploy_dev.sh`，详见 README 部署节。
 - MetaGPT 路线（`docs/delivery.md` 第 7 节）不再是 P0：依赖重、时延不可控，仅在有富余时间时用 `scripts/fake_metagpt.py` 继续验证交互，不阻塞交付。
 - P1 仍是流式输出与 LLM 澄清（`docs/design.md` 4.7 的 `clarify()` 口子）。

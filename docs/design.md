@@ -111,6 +111,9 @@
 | GET | `/api/publishes` | 已发布列表，支持 `limit` |
 | DELETE | `/api/publishes/{slug}` | 取消发布（Unpublish） |
 | GET | `/api/tasks/{id}/zip` | 导出产物 ZIP（`Content-Disposition: attachment`） |
+| GET | `/api/tasks/{id}/data?token=` | 读取应用存储（S9）；无/错 token → 403，未写过 → `{}`；带 `ACAO:*` |
+| PUT | `/api/tasks/{id}/data?token=` | 整包覆盖写应用存储（S9）；≤64KB 合法 JSON → 200，超限 413，非法 400 |
+| OPTIONS | `/api/tasks/{id}/data` | CORS 预检（204）：PUT + JSON 非简单请求，沙箱内 fetch 会先问 |
 | GET | `/p/{slug}` | **公开**入口页，带宽松 CSP 且不带 `X-Frame-Options`（允许被嵌入） |
 | GET | `/p/{slug}/files/{path}` | 公开产物的静态资源 |
 
@@ -198,10 +201,18 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 - 安全：
   - `/files/{path}` 必须 `Path.resolve()` 后校验前缀仍在任务目录内，阻断路径穿越；
   - 预览响应带 CSP：`default-src 'self' 'unsafe-inline' data: blob:`，禁止生成物外联任意脚本；
-  - iframe 使用 `sandbox="allow-scripts"`，**不加** `allow-same-origin`，隔离生成代码与主站。
+  - iframe 使用 `sandbox="allow-scripts allow-forms allow-modals allow-downloads allow-autoplay
+    allow-orientation-lock"`，**不加** `allow-same-origin`，隔离生成代码与主站。
+    allow-forms 是 S9 实测补上的：生成的表单类应用（记账/待办）普遍靠 `<form>` 提交，
+    无此权限时浏览器在 submit 事件**触发前**就拦截，点"添加"毫无反应；配套在预览 CSP 加
+    `form-action 'self'`，防止 form POST 外传数据（fetch 外联已被 connect-src 拦住）。
+    modals/downloads/autoplay/orientation-lock 为无害体验项；popups/pointer-lock/fullscreen/
+    top-navigation/same-origin 一律不开，新增权限先过安全评审。
 - 发布（S8）：`/p/{slug}` 复用同一套 `resolve_artifact()` 校验，但**不套主站 CSP/XFO**：
   CSP 换成预览那份宽松策略，`X-Frame-Options` 不下发（允许被其他站点嵌入），
   并加 `X-Robots-Tag: noindex` 避免公开页被搜索引擎收录。
+- 应用存储引导注入（S9）：预览与公开页 HTML 在服务时于 `</head>` 前注入
+  `<script>window.__ATOMS__={dataUrl, token}</script>`（见 4.9），产物文件本身不改动。
 
 ### 4.5 持久化
 
@@ -267,6 +278,14 @@ CREATE TABLE publishes (
   updated_at TEXT NOT NULL
 );
 -- ALTER TABLE tasks ADD COLUMN version_title TEXT;   -- 版本名，前端版本卡片显示
+
+-- S9 应用存储：只新增表。行按版本链根任务归档（root_of），同一应用迭代共享一份数据
+CREATE TABLE task_data (
+  task_id    TEXT PRIMARY KEY,          -- 版本链根任务 id
+  token      TEXT NOT NULL,             -- 访问令牌（secrets.token_hex(16)，注入给生成应用）
+  data       TEXT NOT NULL DEFAULT '{}',-- 应用状态 JSON 整包，≤64KB
+  updated_at TEXT NOT NULL
+);
 ```
 
 版本链用 `parent_id` 表达：一次"继续修改"= 新建任务并指向父任务，不复制旧产物。回滚 = 前端把某个历史版本设为当前预览目标（不改数据），需要"设为当前"时在 `tasks` 之外不动，由前端记住 `current_task_id`。
@@ -328,6 +347,27 @@ S7 起版本链的父节点来源变了：不再由前端点"继续修改"，而
 - 公开页与预览页共用 `resolve_artifact()` 做路径校验，不新写一份路径逻辑；
 - `/p/` 前缀进 `CSP_EXEMPT_PREFIXES`，公开页下发宽松 CSP 且**不下发** `X-Frame-Options`（要允许被嵌入），另加 `X-Robots-Tag: noindex`；
 - `GET /api/tasks/{id}/zip` 用标准库 `zipfile` 在内存里打包，超过 `MAX_ARTIFACT_BYTES` 返回 413。
+
+### 4.9 应用存储（S9 存储桥）
+
+**问题**：预览 iframe 是 `sandbox="allow-scripts"`（无 `allow-same-origin`）→ opaque origin，
+`localStorage / sessionStorage / cookie` 访问直接抛 `SecurityError`。记账这类应用的"刷新后保留"
+在预览里必然失效——且这是浏览器规范行为，不能靠加 `allow-same-origin` 解决（生成代码会拿到主站 origin，安全模型崩塌）。
+
+**方案**：数据由平台代管。服务端在预览/公开页 HTML 注入 `window.__ATOMS__ = {dataUrl, token}`，
+生成应用用 `fetch` 读写 `GET/PUT /api/tasks/{id}/data?token=…`：
+
+- **令牌**：`task_data.token`（32 hex），建任务时生成（老任务懒创建），比较用 `secrets.compare_digest`；
+- **归档**：存储行按版本链**根任务**归档（`db.root_of`），同一应用迭代出的新版本共享同一份数据，
+  与发布的 Update 语义对齐——发布地址指向新版本后，访客数据不丢；
+- **CORS**：opaque origin 下 fetch 是跨源请求（`Origin: null`），data 端点必须带 `ACAO:*`；
+  `PUT + application/json` 触发预检，提供 OPTIONS 204 处理；CSP `connect-src 'self'` 不拦同 host fetch（实测）；
+- **限额**：单份数据 ≤64KB（整包覆盖写），超限 413；令牌放 URL（沙箱不带 cookie），
+  task_id 本身不可枚举，属"能力 URL"模型，演示场景够用；
+- **一致行为**：预览、`/p/` 公开页、`/files/` 子页 HTML 三处入口统一注入，产物文件不做任何修改。
+
+**落选方案**：`allow-same-origin`（安全不可接受）；postMessage 存储桥（localStorage 同步 API 与
+异步消息错配，生成代码被迫用私有 shim，且预览/发布两套语义）；URL hash 存状态（容量小、父页面重建 iframe 即丢）。
 
 ## 5. 关键技术决策记录
 
