@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app import db, models
+from app import db, models, planner
 from app.config import ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings
 from app.engine.base import Engine
 from app.engine.mock_engine import MockEngine
@@ -99,8 +99,18 @@ def _new_task_id() -> str:
     return f"t_{stamp}_{secrets.token_hex(2)}"
 
 
-async def start(prompt: str, parent_id: str | None = None) -> models.Task:
-    """建任务并入队，立刻返回（不等生成）。"""
+async def start(
+    prompt: str,
+    parent_id: str | None = None,
+    *,
+    engine_prompt: str | None = None,
+) -> models.Task:
+    """建任务并入队，立刻返回（不等生成）。
+
+    `prompt` 是用户这一轮的原话，落库并供前端展示；
+    `engine_prompt` 是拼好对话上下文的完整输入，只传给引擎、不入库，
+    这样任务详情里的 prompt 仍然是"人话"，不会变成一坨历史拼接。
+    """
     task_id = _new_task_id()
     workdir = settings.workspace_dir / task_id
     workdir.mkdir(parents=True, exist_ok=True)
@@ -118,13 +128,13 @@ async def start(prompt: str, parent_id: str | None = None) -> models.Task:
     db.create_task(task)
     db.add_event(task_id, models.STATUS_PENDING)
 
-    handle = asyncio.create_task(_run(task_id), name=f"task:{task_id}")
+    handle = asyncio.create_task(_run(task_id, engine_prompt or prompt), name=f"task:{task_id}")
     _running[task_id] = handle
     log.info("任务入队 id=%s parent=%s prompt=%r", task_id, parent_id, prompt[:80])
     return task
 
 
-async def _run(task_id: str) -> None:
+async def _run(task_id: str, engine_prompt: str) -> None:
     started = time.perf_counter()
     task = db.get_task(task_id)
     if task is None:  # 理论上不会发生；防御性返回
@@ -140,7 +150,7 @@ async def _run(task_id: str) -> None:
             db.add_event(task_id, models.STATUS_RUNNING)
             engine = get_engine()
             await asyncio.wait_for(
-                _invoke_engine(engine, task, workdir),
+                _invoke_engine(engine, task, workdir, engine_prompt),
                 timeout=settings.task_timeout,
             )
         _finish_success(task_id, workdir)
@@ -160,7 +170,7 @@ async def _run(task_id: str) -> None:
         log.info("任务结束 id=%s 耗时=%.1fs", task_id, time.perf_counter() - started)
 
 
-async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path) -> None:
+async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path, prompt: str) -> None:
     async def emit(stage: str) -> None:
         if stage not in models.STAGES:
             return
@@ -171,7 +181,7 @@ async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path) -> No
         except Exception:
             log.warning("阶段上报失败 id=%s stage=%s", task.id, stage, exc_info=True)
 
-    await engine.run(task.id, task.prompt, workdir, emit)
+    await engine.run(task.id, prompt, workdir, emit)
 
 
 def _finish_success(task_id: str, workdir: Path) -> None:
@@ -196,6 +206,58 @@ def _finish_failure(task_id: str, message: str) -> None:
     if db.set_status(task_id, models.STATUS_FAILED, error=text):
         db.add_event(task_id, f"failed: {text}")
         log.warning("任务失败 id=%s 原因=%r", task_id, text)
+
+
+# ---------- 多轮对话 ----------
+
+
+@dataclass
+class TurnResult:
+    """一次用户发言的处理结果：追问，或者已经建好生成任务。"""
+
+    action: str  # clarify | generate
+    message: models.Message
+    task: models.Task | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "action": self.action,
+            "message": self.message.to_dict(),
+            "task_id": self.task.id if self.task else None,
+            "status": self.task.status if self.task else None,
+        }
+
+
+async def start_turn(session_id: str, content: str) -> TurnResult:
+    """处理会话里的一条用户消息。
+
+    落用户消息 → 读历史 → planner 判断要不要先追问：
+    - 追问：只回一条 question 消息，不建任务；
+    - 生成：以会话里最近一次成功产物为父版本建任务，并写一条 artifact 消息挂到 task 上，
+      前端据此渲染"生成中 → 版本卡片"。
+    """
+    if db.get_session(session_id) is None:
+        raise LookupError("session not found")
+
+    text = content.strip()
+    db.add_message(session_id, models.MESSAGE_ROLE_USER, "text", text)
+
+    history = [message.to_dict() for message in db.list_messages(session_id)]
+    decision = planner.decide(history)
+    if decision.ask:
+        question = db.add_message(
+            session_id, models.MESSAGE_ROLE_ASSISTANT, "question", decision.question
+        )
+        log.info("会话 %s 触发追问", session_id)
+        return TurnResult(action="clarify", message=question)
+
+    parent_id = db.last_generated_task(session_id)
+    engine_prompt = planner.build_prompt(history, text)
+    task = await start(text, parent_id=parent_id, engine_prompt=engine_prompt)
+    artifact = db.add_message(
+        session_id, models.MESSAGE_ROLE_ASSISTANT, "artifact", text, task_id=task.id
+    )
+    return TurnResult(action="generate", message=artifact, task=task)
 
 
 async def cancel(task_id: str) -> models.Task | None:
