@@ -289,6 +289,7 @@ class LLMEngine:
                 f"temp={settings.llm_temperature if temperature is None else temperature}",
                 f"max_tokens={max_tokens}",
                 f"effort={settings.llm_reasoning_effort or '-'}",
+                f"extra={json.dumps(settings.llm_extra_body, sort_keys=True) if settings.llm_extra_body else '-'}",
                 # 测试可用 ATOMS_CACHE_TAG 隔离不同场景，正常部署留空
                 f"tag={os.getenv('ATOMS_CACHE_TAG') or '-'}",
             )
@@ -315,6 +316,9 @@ class LLMEngine:
             # 部分推理模型（如智谱 GLM-5.3 系列）无法关闭思考，默认强度会把 max_tokens
             # 全部吃在 reasoning_tokens 上、只返回空 content；low 能显著压缩思考开销。
             payload["reasoning_effort"] = settings.llm_reasoning_effort
+        if settings.llm_extra_body:
+            # 厂商专属参数透传（DeepSeek 关思考用 thinking.type，别的厂商各有各的写法）
+            payload.update(settings.llm_extra_body)
         last_error = ""
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:

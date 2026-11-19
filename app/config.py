@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -94,6 +95,28 @@ def _parse_profile_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _load_extra_body() -> dict | None:
+    """解析 `LLM_EXTRA_BODY`（JSON 对象，原样合并进每次 LLM 请求体）。
+
+    思考开关各厂商不同（智谱认 reasoning_effort，DeepSeek 认 thinking.type），
+    与其为每家加一个字段，不如开放一个透传口。写错 JSON 直接启动失败，
+    不允许"配了但没生效"这种静默错误。
+    """
+    raw = (os.getenv("LLM_EXTRA_BODY") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"LLM_EXTRA_BODY 不是合法 JSON（{exc}）；示例：LLM_EXTRA_BODY="
+            '\'{"thinking":{"type":"disabled"}}\''
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"LLM_EXTRA_BODY 必须是 JSON 对象，收到：{raw[:60]}")
+    return parsed
+
+
 def load_profile() -> tuple[str, Path | None]:
     """按 `LLM_PROFILE` 装载档位，返回 (档位名, 档位文件路径)。
 
@@ -170,6 +193,8 @@ class Settings:
     llm_temperature: float
     # 思考强度（low/medium/high）。部分推理模型始终思考，默认强度会吃光 max_tokens
     llm_reasoning_effort: str
+    # 厂商专属参数（如 DeepSeek 的 thinking、智谱的 reasoning_effort 之外的项），原样合并进请求体
+    llm_extra_body: dict | None
     # 能力档：`llm_profile` 是档位名（只用于展示与日志），文件路径便于排障
     llm_profile: str
     llm_profile_file: Path | None
@@ -245,6 +270,7 @@ def load_settings() -> Settings:
         llm_max_tokens=_int("LLM_MAX_TOKENS", 8000),
         llm_temperature=_float("LLM_TEMPERATURE", 0.6),
         llm_reasoning_effort=(os.getenv("LLM_REASONING_EFFORT") or "").strip().lower(),
+        llm_extra_body=_load_extra_body(),
         llm_profile=profile,
         llm_profile_file=profile_file,
         cache_dir=Path(os.getenv("LLM_CACHE_DIR") or (workspace_dir / ".cache")).resolve(),
