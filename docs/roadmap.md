@@ -195,6 +195,13 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 
 每完成一格就更新本表，避免"看起来做完了"与"实际能演示"之间的偏差。
 
+### 后续工作
+
+- **S8 公网部署（P0）**：代码与本地验收（`verify_s8.sh` 38/38）已完成，`ENGINE_MODE=llm|mock|metagpt|auto` 可切换，`publishes` 表与 `/p/{slug}` 发布闭环可用。**剩下的事只有部署**：配好 `LLM_BASE_URL / LLM_MODEL / LLM_API_KEY` 后 `bash scripts/deploy_accept.sh`，确认公网 `/health` 为 `step=s8 engine=llm`，再跑 `bash scripts/verify_s8.sh`。没有 Key 的环境可用 `python scripts/fake_llm.py` 验证引擎交互。落地记录见 [steps/s8.md](steps/s8.md)。
+- **多实例部署**：验收（main / 8000 / `atoms` / strong 档）与自测（dev / 8001 / `atoms-dev` / dev 档）分别用 `bash scripts/deploy_accept.sh` / `bash scripts/deploy_dev.sh`，详见 README 部署节。
+- MetaGPT 路线（`docs/delivery.md` 第 7 节）不再是 P0：依赖重、时延不可控，仅在有富余时间时用 `scripts/fake_metagpt.py` 继续验证交互，不阻塞交付。
+- P1 仍是流式输出与 LLM 澄清（`docs/design.md` 4.7 的 `clarify()` 口子）。
+
 ## 6. 时间与降级策略
 
 | 情形 | 处理 |
