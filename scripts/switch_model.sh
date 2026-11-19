@@ -115,6 +115,9 @@ cmd_check() {
     fi
   done
 
+  # 模型名不是密钥，直接回显：切换档位时最需要的确认就是这个
+  info "将使用模型：$(var_value "$file" LLM_MODEL)"
+
   local mode
   mode="$(stat -c '%a' "$file" 2>/dev/null || echo '')"
   case "$mode" in
@@ -132,9 +135,34 @@ cmd_check() {
     warn "属主是 $owner，服务用户 $SERVICE_USER 读不到；systemd 注入无妨，但应用自行装载档位会失败"
   fi
 
-  if grep -qE '^LLM_BASE_URL=.*[^/]$' "$file" && ! grep -qE '^LLM_BASE_URL=.*/v[0-9]+$' "$file"; then
-    warn 'LLM_BASE_URL 看起来没有以 /v1 结尾，多数 OpenAI 兼容端点需要它'
+  # base_url 是否要带版本路径因厂而异，不能一律要求 /v1：
+  # 智谱是 /api/paas/v4（加了 /v1 会 404），OpenAI/DeepSeek 等才要 /v1。
+  local base
+  base="$(var_value "$file" LLM_BASE_URL)"
+  if printf '%s' "$base" | grep -q '/chat/completions'; then
+    # 最常见的 404 原因：把完整接口地址当成 base_url，引擎又拼了一次
+    bad "LLM_BASE_URL 不要包含 /chat/completions（引擎会自动拼接，重复会 404）"
+    failures=$((failures + 1))
   fi
+  case "$base" in
+    *bigmodel.cn*)
+      # 智谱的版本段是 /v4，不是 /v1；判断时要排除 /v4，否则正确配置也会被误报
+      if printf '%s' "$base" | grep -qE '/v[0-9]+/?$' && ! printf '%s' "$base" | grep -qE '/v4/?$'; then
+        warn '智谱端点不要带 /v1，正确形如 https://open.bigmodel.cn/api/paas/v4'
+      else
+        ok 'LLM_BASE_URL 形态符合智谱约定（/api/paas/v4，不带 /v1）'
+      fi
+      ;;
+    *deepseek.com*)
+      # DeepSeek 官方 base_url 就是 /，/v1 只是兼容别名，两种写法都对
+      ok 'LLM_BASE_URL 合法（DeepSeek 的 /v1 可省略）'
+      ;;
+    *)
+      if ! printf '%s' "$base" | grep -qE '/v[0-9]+/?$'; then
+        warn 'LLM_BASE_URL 通常以 /v1 结尾（OpenAI/月之暗面/硅基流动）；DeepSeek 可省略，智谱是 /api/paas/v4'
+      fi
+      ;;
+  esac
 
   if grep -qE '^ENGINE_MODE=' "$file"; then
     warn "档位里写了 ENGINE_MODE=$(var_value "$file" ENGINE_MODE)，它会覆盖 unit 的设置；不需要就不要写"
