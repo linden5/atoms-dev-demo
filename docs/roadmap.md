@@ -145,6 +145,22 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/tasks/not-exist
 
 **回滚**：`git checkout s5`。
 
+### S7 多轮对话
+
+**交付物**：`sessions` / `messages` 两张新表（只增不改）、`app/planner.py`（澄清规则 + 上下文组装）、`app/tasks.py#start_turn`、`/api/sessions` 四个接口、前端改为会话驱动的对话流（追问块 / 版本卡片 / 会话切换）、`scripts/verify_s7.sh`、`docs/steps/s7.md`；顺带把"与 MetaGPT 交互的假包"沉淀成 `scripts/fake_metagpt.py` 与 `scripts/serve_fake_metagpt.py`。
+
+**验收**：
+
+```bash
+bash scripts/verify_s7.sh                                        # 18 项：会话 / 追问 / 生成 / 版本链 / 前端契约
+python scripts/gen_once.py "做一个计数器" --fake-metagpt success   # 不走 Web，直接验证引擎交互
+python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态可视化
+```
+
+**回滚**：`git checkout s6`。数据库会多出 `sessions` / `messages` 两张表，旧代码不读取它们，数据保留但不展示；`STEP` 需一并回退到 `s6`。
+
+**边界**：澄清是规则判断而非 LLM 判断；消息流靠轮询刷新，没有流式输出。
+
 ## 5. 进度跟踪
 
 图例：✅ 完成｜◐ 部分完成｜⬜ 未开始
@@ -157,6 +173,7 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/tasks/not-exist
 | S4 | ✅ | ✅ 15/15 | ✅ [s4.md](steps/s4.md) | ◐ 本地 curl + 浏览器通过（auto 降级 MOCK）；真实 MetaGPT 生成待服务器验证 | ✅ `s4` |
 | S5 | ✅ | ✅ 22/22 | ✅ [s5.md](steps/s5.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；服务器部署待人工确认 | ✅ `s5` |
 | S6 | ✅ | ✅ 23/23（FULL 模式串跑 s1–s5） | ✅ [s6.md](steps/s6.md) | ◐ 本地 curl + 浏览器通过；公网部署与真实引擎待服务器验证 | ✅ `s6` / `v1.0` |
+| S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ⬜ 未打 tag |
 
 每完成一格就更新本表，避免"看起来做完了"与"实际能演示"之间的偏差。
 

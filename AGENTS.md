@@ -67,7 +67,11 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 | S4 | 接入 MetaGPT 引擎（与 MOCK 可切换） | 已完成，tag `s4`；真实生成待装 3.11 + metagpt 验证 |
 | S5 | 继续修改 + 版本历史（parent 链） | 已完成，tag `s5` |
 | S6 | 加固、交付文档与全量回归 | 已完成，tag `s6` / `v1.0` |
+| S7 | 多轮对话（会话 / 消息 / 追问 / 上下文） | 已完成，未打 tag |
 
-后续工作看 `docs/delivery.md` 第 7 节（P0：真实 MetaGPT 生成跑通与失败可视化）。
+后续工作：
+
+- P0 仍是真实 MetaGPT 生成跑通（`docs/delivery.md` 第 7 节）；没有 3.11 环境时用 `scripts/fake_metagpt.py` 验证引擎交互。
+- P1 是流式输出与 LLM 澄清（`docs/design.md` 4.7 的 `clarify()` 口子）。
 
 详见 [docs/roadmap.md](docs/roadmap.md)。

@@ -102,6 +102,12 @@
 | GET | `/api/tasks/{id}/preview` | 返回产物主 HTML（`text/html`，带 CSP） |
 | GET | `/api/tasks/{id}/files/{path}` | 返回产物中的静态文件（路径白名单校验） |
 | GET | `/api/tasks/{id}/events` | 事件流（SSE，可选实现；未实现时前端退回轮询） |
+| POST | `/api/sessions` | 新建会话，body `{title?}`，返回 `{session_id, session}` |
+| GET | `/api/sessions` | 会话列表，支持 `limit`、`offset`，带消息数与 `last_task_id` |
+| GET | `/api/sessions/{id}` | 会话详情：消息流 + 消息引用到的任务快照（含 `entry`） |
+| POST | `/api/sessions/{id}/messages` | 发一条消息，返回 `{action:"clarify", message}` 或 `{action:"generate", task_id, status, message}` |
+
+S7 的会话接口是新增，`/api/generate`、`/api/tasks/*` 全部保留且签名不变——旧前端与验收脚本仍可用。
 
 响应示例：
 
@@ -204,18 +210,59 @@ CREATE TABLE task_events (
   message    TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- S7 多轮对话：只新增表，tasks / artifacts / task_events 一个字段都没动
+CREATE TABLE sessions (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,           -- 首条用户消息前 24 字，可后改
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT NOT NULL,
+  role        TEXT NOT NULL,           -- user|assistant
+  kind        TEXT NOT NULL,           -- text|question|artifact|error
+  content     TEXT NOT NULL,
+  task_id     TEXT,                    -- kind=artifact 时指向生成任务
+  created_at  TEXT NOT NULL
+);
 ```
 
 版本链用 `parent_id` 表达：一次"继续修改"= 新建任务并指向父任务，不复制旧产物。回滚 = 前端把某个历史版本设为当前预览目标（不改数据），需要"设为当前"时在 `tasks` 之外不动，由前端记住 `current_task_id`。
+
+S7 起版本链的父节点来源变了：不再由前端点"继续修改"，而是**会话里最近一次成功产物**（`db.last_generated_task`）。也就是说"在同一会话里继续说"就自动成为下一个版本，跨会话不会串版本。
 
 ### 4.6 前端
 
 单页静态文件，无构建步骤（避免引入 node 工具链）：
 
-- 三块区域：需求输入 + 提交、任务/版本列表、预览 iframe；
-- 状态刷新：默认 1.5s 轮询，进入终态后停止；`stage` 变化时更新阶段卡片；
-- 预览：`iframe.src = /api/tasks/{id}/preview`，切换版本时替换 src；
-- 失败态：展示 `error` 摘要与"重试"按钮（重试 = 以同一 prompt 新建任务）。
+- 三块区域：左侧会话对话流（Agent 身份行 / 会话 chips / 「历史」弹出面板 / 消息流 / composer）、右侧预览 iframe；
+- 会话标题：取首条用户消息前 24 字；若首条是「做个网页」这类模糊话（不足 12 字），首次生成时用那句需求覆盖，保证历史列表里能区分；
+- 消息流按 `messages` 顺序渲染：`user` 右侧气泡，`question` Agent 追问块，`artifact` 步骤 + 版本卡片；
+- 状态刷新：默认 1.5s 轮询当前任务，进入终态后停止；`stage` 变化时更新步骤点；
+- 预览：`iframe.src = /api/tasks/{id}/preview`，点会话里任一版本卡片即切换 src；
+- 失败态：展示 `error` 摘要与"重试"按钮（重试 = 把同一需求再发一次，走完整多轮判断）。
+
+### 4.7 多轮对话（S7）
+
+目标：像 Atoms 那样"说一句、Agent 接一句"，而不是一次性的表单提交。
+
+**消息模型**：`sessions` + `messages` 两张新表，`messages.kind` 区分 `text / question / artifact / error`。生成结果不存 HTML，只存一条 `artifact` 消息并挂 `task_id`，产物仍在 workspace 与 `artifacts` 表里。
+
+**澄清判断**（`app/planner.py`）：
+
+1. 默认走规则，不额外调 LLM：延迟、费用、行为都可预测；
+2. 触发追问的条件：本轮之前没追问过，且满足其一——累计用户输入为空、命中"做个网页"这类模糊表达、累计不足 12 字；
+3. **只拦一次**：已经出现过 `question` 消息就不再拦，避免反复追问把用户挡在门外；
+4. 判断不了就放行生成：最坏情况是"需求不够具体也生成了"，不会卡死。
+
+**上下文组装**：`build_prompt(history, requirement)` 把历史压成"用户：… / 助手：…"的纯文本，产物卡片跳过，超长保留最近 1200 字符。这样 **Engine 协议完全不用改** —— 引擎拿到的仍是单个字符串。
+
+**展示与输入分离**：`tasks.prompt` 存用户这一轮的原话（前端展示、任务详情、验收断言都用它），拼好的上下文只作为 `engine_prompt` 在内存里传给引擎、不落库。避免任务列表里出现一坨"对话记录"。
+
+**追问升级的口子**：引擎若实现可选的 `clarify(history)`，planner 可在规则放行后再问一次模型（P1）。当前 MockEngine 与 MetaGPTEngine 都未实现，保证行为一致。
 
 ## 5. 关键技术决策记录
 
@@ -227,6 +274,8 @@ CREATE TABLE task_events (
 | LLM 提供方 | 阿里云百炼免费额度 / 腾讯 TokenHub / DeepSeek 按量 | DeepSeek 按量付费 | 无需审批与地域限制、OpenAI 协议兼容、单价极低 | 需预充 10 元，无免费额度 |
 | 数据库 | SQLite / Postgres | SQLite | 零运维、单进程足够、标准库自带 | 并发写弱，无法水平扩展 |
 | 任务通知 | 轮询 / SSE / WebSocket | 轮询（SSE 可选） | 实现成本最低、断网自愈；生成本身分钟级，实时性收益低 | 状态可见性略差 |
+| 多轮澄清 | 每轮先调 LLM 判断 / 规则判断 | 规则（`app/planner.py`） | 省一次调用与延迟，行为可预测；追问只拦一次，不会阻塞用户 | 极简需求可能被放过；LLM 澄清留作 P1 的 `clarify()` 口子 |
+| 上下文注入 | 改 Engine 协议传消息数组 / 拼成单字符串 | 拼成单字符串（`engine_prompt`） | 引擎层零改动，MOCK 与 MetaGPT 行为一致 | 历史过长要截断，丢失早期细节 |
 | 预览隔离 | 同源 iframe sandbox / 独立子域 | 同源 iframe + `sandbox` + CSP | 免域名、免备案、实现快 | 存在 XSS 面，靠 CSP 与 sandbox 兜底 |
 | 公网访问 | 域名 + HTTPS / 公网 IP + 非标端口 | IP + `:8000` | 国内服务器绑域名需 ICP 备案，时间不允许；80/443 未备案会被拦 | 无 HTTPS，演示地址略粗糙 |
 | 进程模型 | 单 worker / 多 worker | 单 worker（uvicorn 默认） | 任务队列与信号量在进程内，多 worker 会导致状态不一致 | 无法水平扩展 |
@@ -271,7 +320,7 @@ CREATE TABLE task_events (
 ## 8. 演进路线（按优先级）
 
 1. **P0 版本历史与回滚**：`parent_id` 链 + 前端版本列表（已在数据模型中预留）
-2. **P1 生成时延**：流式输出阶段与代码片段，把"等待"变成"可见进度"
+2. **P1 生成时延**：流式输出阶段与代码片段，把"等待"变成"可见进度"；同批做 LLM 澄清（引擎实现 `clarify()` 后由 `planner` 接管）
 3. **P2 产物质量**：生成后自动做一次结构校验（可运行性检查、缺失资源检测）
 4. **P3 多 Agent 可视化**：把 MetaGPT 的角色分工映射为时间轴 UI
 5. **P4 模板市场 / 子域隔离部署**：需要域名与备案，超出本次范围
