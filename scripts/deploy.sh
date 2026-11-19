@@ -26,7 +26,8 @@ fi
 if [ -f requirements.txt ] && [ -x .venv/bin/python ]; then
   if command -v uv >/dev/null 2>&1; then
     log "同步依赖"
-    uv pip install -r requirements.txt
+    # 显式指定解释器：deploy.sh 不激活 venv，uv 默认找不到环境会直接报错
+    uv pip install --python .venv/bin/python -r requirements.txt
   else
     log "未找到 uv，跳过依赖同步"
   fi

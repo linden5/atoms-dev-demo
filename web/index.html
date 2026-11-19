@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Atoms Demo · AI 应用生成工作台</title>
   <meta name="description" content="输入自然语言需求，由智能体生成可运行的网页应用，并在沙箱中实时预览。" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0f14'/%3E%3Cpath d='M16 7l7 4v9l-7 4-7-4v-9z' fill='none' stroke='%236366f1' stroke-width='2'/%3E%3Ccircle cx='16' cy='15.5' r='2.6' fill='%2322d3ee'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -14,98 +15,159 @@
         <span class="brand__mark" aria-hidden="true"></span>
         <span class="brand__name">Atoms Demo</span>
       </span>
-      <span class="status" id="status-indicator">
+      <span class="status" id="status-indicator" data-online="pending">
         <span class="status__dot" aria-hidden="true"></span>
-        <span class="status__text">静态演示 · S1</span>
+        <span class="status__text">检测后端…</span>
       </span>
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s1</b></span>
+      <span class="chip">版本 <b id="version-tag">s8</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
-      <span class="chip chip--muted" id="engine-chip">引擎 MOCK</span>
+      <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
 
     <div class="topbar__right">
+      <button class="ghost-btn ghost-btn--dense" id="share-btn" type="button" aria-expanded="false" aria-controls="share-panel">
+        Share
+      </button>
+      <button class="publish-btn" id="publish-btn" type="button" aria-expanded="false" aria-controls="publish-panel">
+        Publish
+      </button>
       <button class="icon-btn" id="help-btn" type="button" aria-expanded="false" aria-controls="help-panel">
         帮助
       </button>
     </div>
   </header>
 
+  <div class="pop-panel" id="publish-panel" hidden>
+    <h2>发布这个应用</h2>
+    <p class="pop-panel__hint">
+      发布后得到一个任何人都能打开的链接。<strong>预览只是工作副本</strong>，改动要在发布后点 Update 才会推上去。
+    </p>
+    <label class="pop-panel__label" for="publish-slug">网站地址</label>
+    <div class="pop-panel__slug">
+      <span class="pop-panel__prefix">/p/</span>
+      <input
+        id="publish-slug"
+        class="pop-panel__input"
+        type="text"
+        inputmode="latin"
+        maxlength="30"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="my-app"
+      />
+    </div>
+    <p class="pop-panel__status" id="publish-status">还没有发布过。</p>
+    <div class="pop-panel__actions">
+      <button class="publish-btn" id="publish-primary" type="button">Publish</button>
+      <button class="ghost-btn" id="publish-view" type="button" hidden>View app</button>
+      <button class="ghost-btn" id="publish-copy" type="button" hidden>复制链接</button>
+    </div>
+    <button class="pop-panel__link" id="publish-unpublish" type="button" hidden>取消发布（Unpublish）</button>
+  </div>
+
+  <div class="pop-panel" id="share-panel" hidden>
+    <h2>分享</h2>
+    <p class="pop-panel__hint">
+      这个 Demo 没有账户体系，发布后的链接对所有人可见（Public）。链接指向最近一次发布/更新的版本。
+    </p>
+    <div class="pop-panel__actions">
+      <button class="ghost-btn" id="share-copy" type="button">复制链接</button>
+      <button class="ghost-btn" id="share-zip" type="button">导出 ZIP</button>
+    </div>
+    <p class="pop-panel__status" id="share-status">还没有发布，先点 Publish。</p>
+  </div>
+
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S1 静态版本</h2>
-    <p>页面数据全部为内置演示数据，没有后端。点击任务可切换预览，提交需求会在前端模拟一次生成流程，用来验证交互与阶段展示。</p>
-    <p>S2 起由 FastAPI 接管，S3 接入 SQLite 与真实接口，S4 接入 MetaGPT 引擎。</p>
-    <p class="help-panel__meta">当前步骤：S1 · 静态单页与演示数据</p>
+    <h2>这是 S8 版本</h2>
+    <p>左侧是会话：说一句需求，Agent 会先出书面简报、再写代码、最后自检；生成完成后继续说，就会形成新版本。</p>
+    <p>预览页用独立 CSP 并放在 <code>sandbox="allow-scripts"</code> 的 iframe 里，生成代码拿不到主站 Cookie。</p>
+    <p>点右上角 <code>Publish</code> 可以把版本发布成 <code>/p/地址</code>，任何人都能打开；预览与已发布是两条通道。</p>
+    <p class="help-panel__meta">当前步骤：S8 · 真实生成与发布</p>
   </div>
 
   <main class="workspace">
-    <aside class="panel" aria-label="需求与任务">
-      <section class="block">
-        <div class="block__head">
-          <h2 class="block__title">需求</h2>
-          <span class="block__hint">Ctrl / ⌘ + Enter 提交</span>
+    <aside class="chat" aria-label="与智能体的对话">
+      <header class="chat__head">
+        <span class="agent">
+          <span class="agent__avatar" aria-hidden="true">A</span>
+          <span class="agent__body">
+            <span class="agent__name">Alex<span class="agent__role">· 工程师</span></span>
+            <span class="agent__state" id="agent-state" data-state="idle">
+              <span class="agent__dot" aria-hidden="true"></span>
+              <span class="agent__state-text" id="agent-state-text">已就绪</span>
+            </span>
+          </span>
+        </span>
+        <span class="chat__actions">
+          <button class="ghost-btn ghost-btn--dense" id="history-btn" type="button" aria-expanded="false" aria-controls="history-panel">历史</button>
+          <button class="ghost-btn ghost-btn--dense" id="new-session-btn" type="button" title="新建会话">新会话</button>
+          <button class="ghost-btn ghost-btn--dense" id="cancel-btn" type="button" hidden>取消</button>
+        </span>
+      </header>
+
+      <div class="history" id="history-panel" hidden>
+        <div class="history__head">
+          <h2 class="history__title">历史</h2>
+          <span class="history__count" id="history-count"></span>
         </div>
-        <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
-        <textarea
-          id="requirement-input"
-          class="editor"
-          rows="4"
-          spellcheck="false"
-          placeholder="例如：做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题"
-        ></textarea>
+
+        <div class="history__tabs" role="tablist" aria-label="历史分类">
+          <button class="history__tab is-active" type="button" role="tab" data-tab="versions">版本</button>
+          <button class="history__tab" type="button" role="tab" data-tab="messages">消息</button>
+          <button class="history__tab" type="button" role="tab" data-tab="sessions">会话</button>
+        </div>
+
+        <div class="history__pane" id="history-versions"></div>
+
+        <div class="history__pane" id="history-messages" hidden>
+          <input
+            class="history__search"
+            id="history-search"
+            type="search"
+            placeholder="搜索消息"
+            autocomplete="off"
+          />
+          <ul class="history__list" id="history-message-list"></ul>
+        </div>
+
+        <div class="history__pane" id="history-sessions" hidden>
+          <ul class="history__list" id="history-list"></ul>
+          <button class="ghost-btn history__more" id="history-more" type="button" hidden>加载更多</button>
+        </div>
+      </div>
+
+      <div class="threads" id="session-list" aria-label="最近会话"></div>
+
+      <div class="chat__log" id="chat-log" aria-live="polite"></div>
+
+      <div class="composer">
+        <div class="composer__box">
+          <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
+          <textarea
+            id="requirement-input"
+            class="composer__input"
+            rows="2"
+            spellcheck="false"
+            placeholder="描述你想做的应用，例如：做一个番茄钟，25 分钟专注 + 5 分钟休息"
+          ></textarea>
+          <div class="composer__foot">
+            <span class="composer__kbd">Ctrl / ⌘ + Enter</span>
+            <button class="send-btn" id="submit-btn" type="button" aria-label="生成应用">
+              <span class="primary-btn__label sr-only">生成应用</span>
+              <span class="send-btn__icon" aria-hidden="true">↑</span>
+            </button>
+          </div>
+        </div>
+
         <div class="examples" id="example-list">
           <button class="tag" type="button" data-prompt="做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题">番茄钟</button>
           <button class="tag" type="button" data-prompt="做一个待办清单，可以添加、勾选和删除，显示剩余数量">待办清单</button>
           <button class="tag" type="button" data-prompt="做一个极简记账面板，记录收支并显示结余">记账面板</button>
         </div>
-        <button class="primary-btn" id="submit-btn" type="button">
-          <span class="primary-btn__label">生成应用</span>
-          <span class="primary-btn__hint" aria-hidden="true">↵</span>
-        </button>
-      </section>
-
-      <section class="block">
-        <div class="block__head">
-          <h2 class="block__title">阶段</h2>
-          <span class="block__hint" id="stage-hint">等待提交</span>
-        </div>
-        <ol class="stages" id="stage-list">
-          <li class="stage" data-stage="planning">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">需求规划</span>
-              <span class="stage__desc">拆解意图与页面结构</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-          <li class="stage" data-stage="coding">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">编码生成</span>
-              <span class="stage__desc">产出可运行的单页应用</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-          <li class="stage" data-stage="checking">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">自检与落库</span>
-              <span class="stage__desc">校验产物并持久化</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-        </ol>
-      </section>
-
-      <section class="block block--grow">
-        <div class="block__head">
-          <h2 class="block__title">任务与版本</h2>
-          <span class="block__hint" id="task-hint">点击切换预览</span>
-        </div>
-        <ul class="tasks" id="task-list"></ul>
-      </section>
+      </div>
     </aside>
 
     <section class="preview" aria-label="预览">
@@ -126,6 +188,8 @@
       </div>
 
       <div class="preview__stage">
+        <p class="preview__note" id="preview-note">预览是工作副本，访客看到的是已发布版本。</p>
+
         <div class="progress-bar" id="progress-bar" aria-hidden="true"></div>
 
         <div class="error-banner" id="error-banner" hidden>
@@ -134,6 +198,11 @@
         </div>
 
         <div class="canvas" id="preview-canvas" data-width="100">
+          <div class="canvas__loading" id="preview-loading" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <span>加载预览…</span>
+          </div>
+
           <iframe
             id="preview-frame"
             class="canvas__frame"
@@ -146,7 +215,7 @@
             <div class="empty__card">
               <span class="empty__mark" aria-hidden="true"></span>
               <h3>还没有选中的任务</h3>
-              <p>从左侧选择一条演示任务，或在需求框里描述你想生成的应用。</p>
+              <p>从左侧选择一条任务，或在需求框里描述你想生成的应用。</p>
             </div>
           </div>
         </div>

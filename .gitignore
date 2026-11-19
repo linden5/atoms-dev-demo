@@ -10,7 +10,18 @@ logs/
 .env
 .env.local
 
+# 验收脚本的本地地址配置（模板见 deploy/verify.env.example）
+deploy/verify.env
+
+# playwright-cli 的会话快照与日志（浏览器验收用，不进版本控制）
+.playwright-cli/
+
+# 文档站点本地镜像（playwright-cli 抓取的 HTML / Markdown / 图片，仅本地用）
+dump/
+
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+.codebuddy
+dump

@@ -75,8 +75,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ### 4. 安装依赖
 
 ```powershell
-uv pip install metagpt fastapi "uvicorn[standard]" aiosqlite loguru httpx
+# 基础段（S2 起，必装）
+uv pip install fastapi "uvicorn[standard]" aiosqlite loguru httpx
+
+# 引擎段：metagpt 目前装不上，不要执行下面这行，原因见紧随其后的说明
+# uv pip install metagpt
 ```
+
+> **metagpt 无法通过 pip 安装（2026-11 实测，全版本）**：0.6.0–0.8.2 钉 `lancedb==0.4.0`，0.3.0–0.5.2 钉 `lancedb==0.1.16`，这两个发布版本已从 PyPI 移除，依赖解析第一步就失败，与 Python 版本、平台都无关。Windows 上即使绕过这一条，还要现场编译 `volcengine-python-sdk`（无 wheel），实测不划算。需要 MetaGPT 能力请走 Docker 路线：[metagpt-docker.md](metagpt-docker.md)。
 
 国内网络较慢时切镜像：
 
@@ -103,6 +109,25 @@ llm:
 ```
 
 注意：`base_url` 末尾的 `/v1` 不能省略；`api_type` 必须是 `openai`。
+
+#### 5.1 能力档（Windows 上没有 systemd）
+
+开发机不需要 `switch_model.sh`（它依赖 systemd），用同一套档位文件 + 两个环境变量等价实现：
+
+```powershell
+$env:LLM_PROFILE = "cheap"                          # 档位名
+$env:LLM_PROFILE_DIR = "$HOME\.atoms\llm"           # 目录，放 cheap.env
+# cheap.env 里是平铺的 KEY=VALUE：
+#   ENGINE_MODE=llm
+#   LLM_BASE_URL=https://api.deepseek.com/v1
+#   LLM_MODEL=deepseek-chat
+#   LLM_API_KEY=sk-...
+```
+
+- 已存在的 `$env:LLM_*` 优先于档位文件，便于临时覆盖单项
+- 档位文件是密钥，**不要放进仓库**；`C:\Users\<你>\.atoms\` 在仓库外，安全
+- 换档位后要重启服务（不做热加载）
+- 缓存在 `workspace\.cache\`，`$env:LLM_CACHE = "0"` 可关闭；`meta.json` 的 `cache_hits` 看命中次数
 
 ### 6. 验证环境
 
