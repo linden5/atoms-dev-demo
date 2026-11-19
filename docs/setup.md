@@ -45,8 +45,14 @@ python -V               # 必须输出 3.11.x
 ### 4. 安装依赖
 
 ```bash
-uv pip install metagpt fastapi "uvicorn[standard]" aiosqlite loguru httpx
+# 基础段（S2 起，必装）
+uv pip install fastapi "uvicorn[standard]" aiosqlite loguru httpx
+
+# 引擎段：metagpt 目前装不上，不要执行下面这行，原因见紧随其后的说明
+# uv pip install metagpt
 ```
+
+> **metagpt 无法通过 pip 安装（2026-11 实测，全版本）**：0.6.0–0.8.2 钉 `lancedb==0.4.0`，0.3.0–0.5.2 钉 `lancedb==0.1.16`，这两个发布版本已从 PyPI 移除，依赖解析第一步就失败，与 Python 版本、平台都无关。此外 metagpt 0.8.1 的 `pydantic==2.6.4`、0.8.2 的 `websockets<12` / `typing-extensions==4.9.0` 与本项目的 fastapi/uvicorn 冲突。需要 MetaGPT 能力请走 Docker 路线：[metagpt-docker.md](metagpt-docker.md)。
 
 国内网络较慢时可临时切镜像：
 
@@ -107,6 +113,11 @@ export LLM_PROFILE=cheap
 export LLM_PROFILE_DIR="$HOME/.atoms/llm"
 # 之后启动服务即可；已存在的 LLM_* 变量优先级高于档位文件
 ```
+
+两个容易踩的点：
+
+- **档位文件里不要写 `ENGINE_MODE`**。`switch_model.sh init` 生成的模板里这一行是注释掉的，原因写在那里：systemd 先应用 unit 的 `Environment=`、再应用 drop-in 的 `EnvironmentFile=`，档位里的 `ENGINE_MODE=llm` 会把 unit 里用来降级的 `ENGINE_MODE=mock` 顶掉。引擎模式归 unit 管，档位只管模型参数。
+- **MOCK 模式不受档位影响**。已明确指定 MOCK（`ENGINE_MODE=mock` 或 `MOCK_ENGINE=1`）时，档位文件缺失、名字非法、甚至不可读都只记一条 WARN 并继续启动，`/health` 的 `profile` 为空、`cache.enabled` 为 `false`。演示兜底不该被模型配置挡住；但切回真实引擎前必须先补齐档位，否则启动会直接报错。
 
 切换档位必须重启服务：引擎在进程启动时读配置，运行中换文件会出现"以为切了其实没切"。MetaGPT 引擎启动时会把当前 `LLM_*` 同步写进 `~/.metagpt/config2.yaml`（首次覆盖前留 `.atoms-bak`），所以两个引擎会一起跟着档位走。
 
