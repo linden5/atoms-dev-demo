@@ -152,6 +152,90 @@ async def cancel_task(task_id: str) -> dict:
     return {"task_id": task.id, "status": task.status}
 
 
+# ---------- 会话（多轮对话） ----------
+
+
+class SessionCreateRequest(BaseModel):
+    title: str = Field(default="", max_length=120)
+
+
+class MessageRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=MAX_PROMPT_CHARS)
+
+    @field_validator("content")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("content 不能为空")
+        return text
+
+
+@router.post("/api/sessions", status_code=201, tags=["sessions"], summary="创建会话")
+async def create_session(payload: SessionCreateRequest | None = None) -> dict:
+    session = db.create_session(payload.title if payload else "")
+    return {"session_id": session.id, "session": session.to_dict()}
+
+
+@router.get("/api/sessions", tags=["sessions"], summary="会话列表")
+async def list_sessions(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict:
+    items = db.list_sessions(limit=limit, offset=offset)
+    return {
+        "total": db.count_sessions(),
+        "limit": limit,
+        "offset": offset,
+        "sessions": [session.to_dict() for session in items],
+    }
+
+
+@router.get("/api/sessions/{session_id}", tags=["sessions"], summary="会话详情")
+async def session_detail(session_id: str) -> dict:
+    """会话 + 消息流 + 消息引用到的任务快照。
+
+    任务快照内联在这里，前端刷新一次就能把气泡、阶段、版本卡片全部画出来；
+    只有最后一条任务带 events（阶段耗时要用），切换版本时再按需拉 `/api/tasks/{id}`。
+    """
+    session = db.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    messages = db.list_messages(session_id)
+    snapshots: dict[str, dict] = {}
+    for message in messages:
+        task_id = message.task_id
+        if not task_id or task_id in snapshots:
+            continue
+        task = db.get_task(task_id, with_events=task_id == session.last_task_id)
+        if task is None:
+            continue
+        payload = task.to_dict()
+        payload["entry"] = tasks.entry_of(task.artifacts)
+        snapshots[task_id] = payload
+
+    return {
+        "session": session.to_dict(),
+        "messages": [message.to_dict() for message in messages],
+        "tasks": list(snapshots.values()),
+    }
+
+
+@router.post(
+    "/api/sessions/{session_id}/messages",
+    status_code=202,
+    tags=["sessions"],
+    summary="发送消息（可能追问，也可能直接生成）",
+)
+async def post_message(session_id: str, payload: MessageRequest) -> dict:
+    try:
+        result = await tasks.start_turn(session_id, payload.content)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    return result.to_dict()
+
+
 # ---------- 产物 ----------
 
 
