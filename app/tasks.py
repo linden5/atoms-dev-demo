@@ -200,15 +200,15 @@ async def _run(task_id: str, engine_prompt: str) -> None:
 
 
 async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path, prompt: str) -> None:
-    async def emit(stage: str) -> None:
-        if stage not in models.STAGES:
-            return
+    async def emit(message: str) -> None:
         # 阶段上报是"尽力而为"：数据库抖动不该把已有产物的任务判为失败
+        # 阶段名更新 task.stage；其他消息（如调用重试）只追加事件，不动 stage
         try:
-            db.set_stage(task.id, stage)
-            db.add_event(task.id, stage)
+            if message in models.STAGES:
+                db.set_stage(task.id, message)
+            db.add_event(task.id, message)
         except Exception:
-            log.warning("阶段上报失败 id=%s stage=%s", task.id, stage, exc_info=True)
+            log.warning("事件上报失败 id=%s message=%s", task.id, message, exc_info=True)
 
     await engine.run(task.id, prompt, workdir, emit)
 
