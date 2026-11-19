@@ -22,24 +22,70 @@
     </div>
 
     <div class="topbar__center">
-      <span class="chip">版本 <b id="version-tag">s6</b></span>
+      <span class="chip">版本 <b id="version-tag">s8</b></span>
       <span class="chip">任务 <b id="task-count">0</b></span>
       <span class="chip chip--muted" id="engine-chip">引擎 未接入</span>
     </div>
 
     <div class="topbar__right">
+      <button class="ghost-btn ghost-btn--dense" id="share-btn" type="button" aria-expanded="false" aria-controls="share-panel">
+        Share
+      </button>
+      <button class="publish-btn" id="publish-btn" type="button" aria-expanded="false" aria-controls="publish-panel">
+        Publish
+      </button>
       <button class="icon-btn" id="help-btn" type="button" aria-expanded="false" aria-controls="help-panel">
         帮助
       </button>
     </div>
   </header>
 
+  <div class="pop-panel" id="publish-panel" hidden>
+    <h2>发布这个应用</h2>
+    <p class="pop-panel__hint">
+      发布后得到一个任何人都能打开的链接。<strong>预览只是工作副本</strong>，改动要在发布后点 Update 才会推上去。
+    </p>
+    <label class="pop-panel__label" for="publish-slug">网站地址</label>
+    <div class="pop-panel__slug">
+      <span class="pop-panel__prefix">/p/</span>
+      <input
+        id="publish-slug"
+        class="pop-panel__input"
+        type="text"
+        inputmode="latin"
+        maxlength="30"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="my-app"
+      />
+    </div>
+    <p class="pop-panel__status" id="publish-status">还没有发布过。</p>
+    <div class="pop-panel__actions">
+      <button class="publish-btn" id="publish-primary" type="button">Publish</button>
+      <button class="ghost-btn" id="publish-view" type="button" hidden>View app</button>
+      <button class="ghost-btn" id="publish-copy" type="button" hidden>复制链接</button>
+    </div>
+    <button class="pop-panel__link" id="publish-unpublish" type="button" hidden>取消发布（Unpublish）</button>
+  </div>
+
+  <div class="pop-panel" id="share-panel" hidden>
+    <h2>分享</h2>
+    <p class="pop-panel__hint">
+      这个 Demo 没有账户体系，发布后的链接对所有人可见（Public）。链接指向最近一次发布/更新的版本。
+    </p>
+    <div class="pop-panel__actions">
+      <button class="ghost-btn" id="share-copy" type="button">复制链接</button>
+      <button class="ghost-btn" id="share-zip" type="button">导出 ZIP</button>
+    </div>
+    <p class="pop-panel__status" id="share-status">还没有发布，先点 Publish。</p>
+  </div>
+
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S7 版本</h2>
-    <p>左侧是会话：说一句需求，Agent 会先确认关键信息再生成；生成完成后继续说，就会形成新版本。</p>
+    <h2>这是 S8 版本</h2>
+    <p>左侧是会话：说一句需求，Agent 会先出书面简报、再写代码、最后自检；生成完成后继续说，就会形成新版本。</p>
     <p>预览页用独立 CSP 并放在 <code>sandbox="allow-scripts"</code> 的 iframe 里，生成代码拿不到主站 Cookie。</p>
-    <p>多轮上下文只拼最近 1200 字符；任务详情里的 prompt 仍是你这一轮的原话。</p>
-    <p class="help-panel__meta">当前步骤：S7 · 多轮对话</p>
+    <p>点右上角 <code>Publish</code> 可以把版本发布成 <code>/p/地址</code>，任何人都能打开；预览与已发布是两条通道。</p>
+    <p class="help-panel__meta">当前步骤：S8 · 真实生成与发布</p>
   </div>
 
   <main class="workspace">
@@ -64,11 +110,33 @@
 
       <div class="history" id="history-panel" hidden>
         <div class="history__head">
-          <h2 class="history__title">历史会话</h2>
+          <h2 class="history__title">历史</h2>
           <span class="history__count" id="history-count"></span>
         </div>
-        <ul class="history__list" id="history-list"></ul>
-        <button class="ghost-btn history__more" id="history-more" type="button" hidden>加载更多</button>
+
+        <div class="history__tabs" role="tablist" aria-label="历史分类">
+          <button class="history__tab is-active" type="button" role="tab" data-tab="versions">版本</button>
+          <button class="history__tab" type="button" role="tab" data-tab="messages">消息</button>
+          <button class="history__tab" type="button" role="tab" data-tab="sessions">会话</button>
+        </div>
+
+        <div class="history__pane" id="history-versions"></div>
+
+        <div class="history__pane" id="history-messages" hidden>
+          <input
+            class="history__search"
+            id="history-search"
+            type="search"
+            placeholder="搜索消息"
+            autocomplete="off"
+          />
+          <ul class="history__list" id="history-message-list"></ul>
+        </div>
+
+        <div class="history__pane" id="history-sessions" hidden>
+          <ul class="history__list" id="history-list"></ul>
+          <button class="ghost-btn history__more" id="history-more" type="button" hidden>加载更多</button>
+        </div>
       </div>
 
       <div class="threads" id="session-list" aria-label="最近会话"></div>
@@ -120,6 +188,8 @@
       </div>
 
       <div class="preview__stage">
+        <p class="preview__note" id="preview-note">预览是工作副本，访客看到的是已发布版本。</p>
+
         <div class="progress-bar" id="progress-bar" aria-hidden="true"></div>
 
         <div class="error-banner" id="error-banner" hidden>

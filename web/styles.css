@@ -1319,3 +1319,227 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- 发布 / 分享（S8） ---------- */
+
+.publish-btn {
+  border: 1px solid rgba(99, 102, 241, 0.55);
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.28), rgba(99, 102, 241, 0.14));
+  color: var(--text-0);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 150ms var(--ease), background 150ms var(--ease);
+}
+
+.publish-btn:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.7);
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.4), rgba(34, 211, 238, 0.16));
+}
+
+.publish-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pop-panel {
+  position: absolute;
+  top: 62px;
+  right: 18px;
+  width: 340px;
+  padding: 16px 18px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.85);
+  z-index: 30;
+  animation: drop-in 160ms var(--ease);
+}
+
+.pop-panel h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pop-panel__hint {
+  margin: 0 0 12px;
+  color: var(--text-1);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.pop-panel__hint strong {
+  color: var(--text-0);
+}
+
+.pop-panel__label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.pop-panel__slug {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.pop-panel__prefix {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.pop-panel__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 0 9px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-0);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.pop-panel__status {
+  margin: 10px 0 0;
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.pop-panel__status[data-tone='ok'] {
+  color: #86efac;
+}
+
+.pop-panel__status[data-tone='warn'] {
+  color: #fbbf24;
+}
+
+.pop-panel__status[data-tone='err'] {
+  color: #fca5a5;
+}
+
+.pop-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pop-panel__link {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.pop-panel__link:hover {
+  color: var(--text-0);
+}
+
+.preview__note {
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.07);
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.preview__note[data-tone='ok'] {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+  color: #86efac;
+}
+
+/* ---------- 历史面板：版本 / 消息 / 会话（S8） ---------- */
+
+.history__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+
+.history__tab {
+  flex: 1 1 0;
+  padding: 5px 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 150ms var(--ease), background 150ms var(--ease);
+}
+
+.history__tab:hover {
+  color: var(--text-0);
+}
+
+.history__tab.is-active {
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.16);
+  color: var(--text-0);
+}
+
+.history__pane {
+  display: block;
+}
+
+.history__pane[hidden] {
+  display: none;
+}
+
+.history__search {
+  width: calc(100% - 24px);
+  margin: 0 12px 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-0);
+  font-size: 12px;
+  outline: none;
+}
+
+.history__search:focus {
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+.history__item .history__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.msg.is-flash {
+  animation: msg-flash 1.4s var(--ease);
+}
+
+@keyframes msg-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  20%,
+  60% {
+    background: rgba(34, 211, 238, 0.12);
+  }
+}

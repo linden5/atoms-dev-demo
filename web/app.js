@@ -6,7 +6,7 @@
   const POLL_INTERVAL = 1500;
   const TERMINAL = { succeeded: true, failed: true, cancelled: true };
 
-  const backend = { online: false, step: 's6', engine: 'none' };
+  const backend = { online: false, step: 's8', engine: 'none' };
 
   const state = {
     sessions: [],
@@ -22,7 +22,12 @@
     pollFailures: 0,
     loaded: false,
     scrollToBottom: false,
-    history: { items: [], total: 0, limit: 20 },
+    history: { items: [], total: 0, limit: 20, tab: 'versions', query: '' },
+    // 发布：publish 是当前应用（会话）的公开地址，task_id 指向它绑定的版本
+    publish: null,
+    publishBusy: false,
+    publishError: '',
+    publishNotice: '',
   };
 
   const el = {
@@ -41,6 +46,12 @@
     historyList: document.getElementById('history-list'),
     historyCount: document.getElementById('history-count'),
     historyMore: document.getElementById('history-more'),
+    historyTabs: document.querySelector('.history__tabs'),
+    historyVersions: document.getElementById('history-versions'),
+    historyMessages: document.getElementById('history-messages'),
+    historySessions: document.getElementById('history-sessions'),
+    historySearch: document.getElementById('history-search'),
+    historyMessageList: document.getElementById('history-message-list'),
     cancel: document.getElementById('cancel-btn'),
     sessionList: document.getElementById('session-list'),
     chatLog: document.getElementById('chat-log'),
@@ -61,6 +72,20 @@
     widthGroup: document.getElementById('width-group'),
     meta: document.getElementById('preview-meta'),
     progress: document.getElementById('progress-bar'),
+    previewNote: document.getElementById('preview-note'),
+    publishBtn: document.getElementById('publish-btn'),
+    publishPanel: document.getElementById('publish-panel'),
+    publishSlug: document.getElementById('publish-slug'),
+    publishStatus: document.getElementById('publish-status'),
+    publishPrimary: document.getElementById('publish-primary'),
+    publishView: document.getElementById('publish-view'),
+    publishCopy: document.getElementById('publish-copy'),
+    publishUnpublish: document.getElementById('publish-unpublish'),
+    shareBtn: document.getElementById('share-btn'),
+    sharePanel: document.getElementById('share-panel'),
+    shareStatus: document.getElementById('share-status'),
+    shareCopy: document.getElementById('share-copy'),
+    shareZip: document.getElementById('share-zip'),
   };
 
   // ---------- 工具 ----------
@@ -133,7 +158,7 @@
   function updateStatus() {
     if (el.statusWrap) el.statusWrap.dataset.online = backend.online ? 'true' : 'false';
 
-    const step = String(backend.step || 's6').toUpperCase();
+    const step = String(backend.step || 's8').toUpperCase();
     if (backend.online) {
       el.statusText.textContent = state.busy ? '提交中 · ' + step : '后端已连接 · ' + step;
     } else {
@@ -216,9 +241,11 @@
       state.tasksById = {};
       state.activeId = null;
       state.scrollToBottom = true;
+      state.publish = null;
       stopPolling();
       renderChat();
       syncPreview(false);
+      renderPublish();
       await loadSessions();
       refreshHistoryIfOpen();
       if (el.input) el.input.focus();
@@ -246,7 +273,7 @@
     if (!el.historyList) return;
     el.historyList.innerHTML = '';
 
-    if (el.historyCount) {
+    if (el.historyCount && state.history.tab === 'sessions') {
       const shown = state.history.items.length;
       el.historyCount.textContent =
         state.history.total + ' 个会话' + (shown < state.history.total ? '（显示 ' + shown + '）' : '');
@@ -281,10 +308,160 @@
     }
   }
 
+  // ---------- 历史：版本 / 消息 / 会话 ----------
+  //
+  // 三个标签页对应三种"回到过去"的方式（对齐 help 文档的 History）：
+  // - 版本：切回某个版本预览（Restore，不删除后续版本）；
+  // - 消息：搜索并跳转到某条消息，只滚动，不改变项目状态；
+  // - 会话：切换到另一个应用/会话（原来的历史会话列表）。
+
+  function setHistoryTab(tab) {
+    state.history.tab = tab;
+    if (el.historyTabs) {
+      Array.prototype.forEach.call(el.historyTabs.querySelectorAll('[data-tab]'), function (btn) {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+    if (el.historyVersions) el.historyVersions.hidden = tab !== 'versions';
+    if (el.historyMessages) el.historyMessages.hidden = tab !== 'messages';
+    if (el.historySessions) el.historySessions.hidden = tab !== 'sessions';
+    renderHistoryAll();
+  }
+
+  function versionList() {
+    const items = [];
+    state.messages.forEach(function (message) {
+      if (message.kind !== 'artifact' || !message.task_id) return;
+      const task = state.tasksById[message.task_id];
+      if (!task) return;
+      items.push({ message: message, task: task, index: items.length + 1 });
+    });
+    return items;
+  }
+
+  function renderVersions() {
+    if (!el.historyVersions) return;
+    el.historyVersions.innerHTML = '';
+
+    const items = versionList().filter(function (item) {
+      return item.task.status === 'succeeded';
+    });
+    if (!items.length) {
+      el.historyVersions.appendChild(
+        node('p', 'history__empty', '还没有可用版本，先生成一个。')
+      );
+      return;
+    }
+
+    const list = node('ul', 'history__list');
+    items.forEach(function (item) {
+      const li = document.createElement('li');
+      const btn = node(
+        'button',
+        'history__item' + (item.task.id === state.activeId ? ' is-active' : '')
+      );
+      btn.type = 'button';
+      btn.dataset.taskId = item.task.id;
+      btn.title = item.task.prompt || '';
+      const name = item.task.version_title || shorten(item.message.content, 24);
+      btn.appendChild(node('span', 'history__name', '版本 ' + item.index + '：' + name));
+
+      const meta = node('div', 'history__meta');
+      meta.appendChild(node('span', null, fmtStamp(item.task.created_at)));
+      meta.appendChild(node('span', null, (item.task.artifacts || []).length + ' 个文件'));
+      meta.appendChild(
+        node('span', null, item.task.id === state.activeId ? '正在预览' : 'Restore')
+      );
+      btn.appendChild(meta);
+      li.appendChild(btn);
+      list.appendChild(li);
+    });
+    el.historyVersions.appendChild(list);
+  }
+
+  function messageKindLabel(message) {
+    if (message.role === 'user') return '你的需求';
+    if (message.kind === 'artifact') return '生成结果';
+    if (message.kind === 'question') return '追问';
+    return 'Agent';
+  }
+
+  function renderMessageHistory() {
+    if (!el.historyMessageList) return;
+    const query = String(state.history.query || '').trim().toLowerCase();
+    el.historyMessageList.innerHTML = '';
+
+    const items = state.messages.filter(function (message) {
+      if (!query) return true;
+      return String(message.content || '').toLowerCase().indexOf(query) >= 0;
+    });
+    if (!items.length) {
+      el.historyMessageList.appendChild(
+        node('li', 'history__empty', query ? '没有匹配的消息' : '还没有消息')
+      );
+      return;
+    }
+
+    items.forEach(function (message) {
+      const li = document.createElement('li');
+      const btn = node('button', 'history__item');
+      btn.type = 'button';
+      btn.dataset.messageId = String(message.id);
+      const who = message.role === 'user' ? '你' : 'Agent';
+      btn.appendChild(node('span', 'history__name', who + '：' + shorten(message.content, 30)));
+
+      const meta = node('div', 'history__meta');
+      meta.appendChild(node('span', null, fmtStamp(message.created_at)));
+      meta.appendChild(node('span', null, messageKindLabel(message)));
+      meta.appendChild(node('span', null, '跳转'));
+      btn.appendChild(meta);
+      li.appendChild(btn);
+      el.historyMessageList.appendChild(li);
+    });
+  }
+
+  function renderHistoryAll() {
+    renderVersions();
+    renderMessageHistory();
+    if (el.historyCount && state.history.tab !== 'sessions') {
+      const versions = versionList().filter(function (item) {
+        return item.task.status === 'succeeded';
+      }).length;
+      el.historyCount.textContent = versions
+        ? versions + ' 个版本 · ' + state.messages.length + ' 条消息'
+        : '';
+    }
+  }
+
+  function jumpToMessage(messageId) {
+    closeHistory();
+    const target = el.chatLog
+      ? el.chatLog.querySelector('[data-message-id="' + messageId + '"]')
+      : null;
+    if (!target) return;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.classList.add('is-flash');
+    window.setTimeout(function () {
+      target.classList.remove('is-flash');
+    }, 1400);
+  }
+
+  function restoreVersion(taskId) {
+    if (!state.tasksById[taskId]) return;
+    state.activeId = taskId;
+    closeHistory();
+    renderChat();
+    syncPreview(true);
+    refreshPublish();
+  }
+
   async function openHistory() {
     if (!el.historyPanel) return;
     el.historyPanel.hidden = false;
     if (el.historyBtn) el.historyBtn.setAttribute('aria-expanded', 'true');
+    setHistoryTab(state.history.tab || 'versions');
     await loadHistory();
   }
 
@@ -301,7 +478,10 @@
   }
 
   function refreshHistoryIfOpen() {
-    if (el.historyPanel && !el.historyPanel.hidden) renderHistory();
+    if (el.historyPanel && !el.historyPanel.hidden) {
+      renderHistory();
+      renderHistoryAll();
+    }
   }
 
   // ---------- 会话详情 ----------
@@ -347,6 +527,7 @@
       state.scrollToBottom = true;
       renderChat();
       syncPreview(false);
+      refreshPublish();
       resumePolling();
       refreshHistoryIfOpen();
     } catch (err) {
@@ -411,13 +592,26 @@
     }).length;
   }
 
+  // 真实引擎一次要 30–90 秒，只写"正在生成…"会让人怀疑卡住，所以带上秒数
+  function elapsedSeconds(task) {
+    const began = Date.parse(task.created_at || '');
+    if (Number.isNaN(began)) return null;
+    const ended = isTerminal(task.status) ? Date.parse(task.updated_at || '') : Date.now();
+    if (Number.isNaN(ended)) return null;
+    return Math.max(0, Math.round((ended - began) / 1000));
+  }
+
   function progressLabel(task) {
     const done = completedSteps(task);
-    if (task.status === 'succeeded') return '已处理 ' + done + ' 步';
-    if (task.status === 'failed') return '已处理 ' + done + ' 步 · 失败';
-    if (task.status === 'cancelled') return '已处理 ' + done + ' 步 · 已取消';
-    if (task.status === 'running') return '正在' + (STAGE_LABEL[task.stage] || '生成') + '…';
-    return '排队中…';
+    const elapsed = elapsedSeconds(task);
+    const clock = elapsed == null ? '' : ' · ' + elapsed + 's';
+    if (task.status === 'succeeded') return '已处理 ' + done + ' 步' + clock;
+    if (task.status === 'failed') return '已处理 ' + done + ' 步 · 失败' + clock;
+    if (task.status === 'cancelled') return '已处理 ' + done + ' 步 · 已取消' + clock;
+    if (task.status === 'running') {
+      return '正在' + (STAGE_LABEL[task.stage] || '生成') + '…' + clock;
+    }
+    return '排队中…' + clock;
   }
 
   function currentTask() {
@@ -470,12 +664,15 @@
 
   function userBubble(message) {
     const wrap = node('div', 'msg msg--user');
+    // 供 History → 消息 跳转定位
+    wrap.dataset.messageId = String(message.id);
     wrap.appendChild(node('div', 'msg__bubble', message.content));
     return wrap;
   }
 
   function questionMessage(message) {
     const wrap = node('div', 'msg msg--agent');
+    wrap.dataset.messageId = String(message.id);
     const head = node('div', 'msg__head');
     head.appendChild(node('span', 'agent__avatar agent__avatar--sm', 'A'));
     head.appendChild(node('span', 'msg__label', '需要补充信息'));
@@ -509,6 +706,14 @@
 
     if (task.status === 'failed') {
       box.appendChild(node('p', 'artifact__error', task.error || '引擎没有返回可预览的产物。'));
+      // 分层建议：先排除"页面没刷新/旧任务"，再谈模型本身，避免用户一上来就反复重试
+      box.appendChild(
+        node(
+          'p',
+          'artifact__hint',
+          '可以先刷新页面或新开窗口确认不是显示问题；同一需求建议只重试一次，仍失败就把需求写得更具体（要哪些控件、什么数据）。'
+        )
+      );
       const foot = node('div', 'artifact__foot');
       const retry = node('button', 'link-btn', '重试');
       retry.type = 'button';
@@ -518,15 +723,12 @@
       return box;
     }
 
-    box.appendChild(
-      node(
-        'p',
-        'artifact__title',
-        task.status === 'cancelled'
-          ? '任务已取消，产物目录仍保留在 workspace。'
-          : shorten(message.content, 88)
-      )
-    );
+    // 有版本名就显示版本名（来自引擎 meta.json），否则回落到用户这一轮的原话
+    const heading =
+      task.status === 'cancelled'
+        ? '任务已取消，产物目录仍保留在 workspace。'
+        : task.version_title || shorten(message.content, 88);
+    box.appendChild(node('p', 'artifact__title', heading));
 
     const foot = node('div', 'artifact__foot');
     foot.appendChild(
@@ -547,6 +749,7 @@
   function artifactMessage(message) {
     const task = message.task_id ? state.tasksById[message.task_id] : null;
     const wrap = node('div', 'msg msg--agent');
+    wrap.dataset.messageId = String(message.id);
 
     const head = node('div', 'msg__head');
     head.appendChild(node('span', 'agent__avatar agent__avatar--sm', 'A'));
@@ -753,6 +956,7 @@
         }
         renderChat();
         syncPreview(true);
+        refreshPublish();
         loadSessions();
       } else {
         renderChat();
@@ -826,16 +1030,202 @@
   }
 
   function retryLast() {
+    // 只把上次的需求填回输入框，不自动发送：
+    // 后端每收到一条消息就追加一条用户消息，自动重发会让气泡越攒越多。
     const text = lastUserContent();
-    if (text) {
-      if (el.input) el.input.value = text;
-      send(text);
-    }
+    if (!text || !el.input) return;
+    el.input.value = text;
+    el.input.focus();
+    el.input.setSelectionRange(text.length, text.length);
   }
 
   function openPreview() {
     const url = previewUrl(currentTask());
     if (url) window.open(url, '_blank', 'noopener');
+  }
+
+  // ---------- 发布 / 分享 ----------
+  //
+  // 心智模型（对齐 help 文档）：预览是工作副本，`/p/{slug}` 才是访客能打开的版本。
+  // 同一个会话 = 同一个应用，所以"发布"绑在会话上，Update 只是把地址指向新版本。
+
+  function publishedUrl(slug) {
+    return slug ? window.location.origin + '/p/' + slug : '';
+  }
+
+  function setPublishStatus(text, tone) {
+    if (!el.publishStatus) return;
+    el.publishStatus.textContent = text;
+    if (tone) el.publishStatus.dataset.tone = tone;
+    else el.publishStatus.removeAttribute('data-tone');
+  }
+
+  async function refreshPublish() {
+    const task = currentTask();
+    if (!task) {
+      state.publish = null;
+      renderPublish();
+      return;
+    }
+    try {
+      const data = await api('/api/tasks/' + encodeURIComponent(task.id) + '/publish');
+      state.publish = (data && data.publish) || null;
+    } catch (err) {
+      state.publish = null;
+    }
+    renderPublish();
+  }
+
+  function renderPublish() {
+    const task = currentTask();
+    const pub = state.publish;
+    const ready = Boolean(task && task.status === 'succeeded');
+    const upToDate = Boolean(pub && task && pub.task_id === task.id);
+
+    if (el.publishBtn) {
+      el.publishBtn.textContent = pub ? (upToDate ? 'Up to date' : 'Update') : 'Publish';
+      el.publishBtn.disabled = state.publishBusy;
+    }
+    if (el.publishPrimary) {
+      el.publishPrimary.textContent = state.publishBusy
+        ? (pub ? 'Updating…' : 'Publishing…')
+        : (pub ? (upToDate ? 'Up to date' : 'Update') : 'Publish');
+      el.publishPrimary.disabled = state.publishBusy || !ready || upToDate;
+    }
+    if (el.publishSlug && pub) el.publishSlug.value = pub.slug;
+    if (el.publishView) el.publishView.hidden = !pub;
+    if (el.publishCopy) el.publishCopy.hidden = !pub;
+    if (el.publishUnpublish) el.publishUnpublish.hidden = !pub;
+
+    if (state.publishNotice) {
+      setPublishStatus(state.publishNotice, 'ok');
+      state.publishNotice = '';
+    } else if (state.publishError) {
+      setPublishStatus(state.publishError, 'err');
+    } else if (!task) {
+      setPublishStatus('先生成或选择一个版本。');
+    } else if (!ready) {
+      setPublishStatus('当前版本还没生成完成。');
+    } else if (!pub) {
+      setPublishStatus('填一个地址，点 Publish 得到公开链接。');
+    } else if (upToDate) {
+      setPublishStatus('Your app is live! · ' + publishedUrl(pub.slug), 'ok');
+    } else {
+      setPublishStatus('线上仍是 /p/' + pub.slug + ' 的旧版本，点 Update 推送当前版本。', 'warn');
+    }
+
+    if (el.shareStatus) {
+      el.shareStatus.textContent = pub ? publishedUrl(pub.slug) : '还没有发布，先点 Publish。';
+      if (pub) el.shareStatus.dataset.tone = 'ok';
+      else el.shareStatus.removeAttribute('data-tone');
+    }
+    if (el.shareCopy) el.shareCopy.disabled = !pub;
+    if (el.shareZip) el.shareZip.disabled = !ready;
+
+    renderPreviewNote();
+  }
+
+  function renderPreviewNote() {
+    if (!el.previewNote) return;
+    const task = currentTask();
+    const pub = state.publish;
+    if (pub && task && pub.task_id === task.id) {
+      el.previewNote.textContent = '已发布：' + publishedUrl(pub.slug) + ' · 访客看到的就是这一版';
+      el.previewNote.dataset.tone = 'ok';
+    } else if (pub) {
+      el.previewNote.textContent = '有未发布的改动：线上仍是 /p/' + pub.slug + ' 的旧版本';
+      el.previewNote.removeAttribute('data-tone');
+    } else {
+      el.previewNote.textContent = '预览是工作副本，访客看到的是已发布版本。';
+      el.previewNote.removeAttribute('data-tone');
+    }
+  }
+
+  async function publishNow() {
+    const task = currentTask();
+    if (!task || task.status !== 'succeeded' || state.publishBusy) return;
+    state.publishBusy = true;
+    state.publishError = '';
+    renderPublish();
+    try {
+      const body = { slug: (el.publishSlug && el.publishSlug.value.trim()) || '' };
+      if (task.prompt) body.title = task.prompt.slice(0, 60);
+      const data = await api('/api/tasks/' + encodeURIComponent(task.id) + '/publish', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      state.publish = data;
+      if (el.publishSlug) el.publishSlug.value = data.slug;
+      state.publishNotice = data.updated ? '已更新到当前版本' : '发布成功：' + publishedUrl(data.slug);
+    } catch (err) {
+      state.publishError = '发布失败：' + err.message;
+    } finally {
+      state.publishBusy = false;
+      renderPublish();
+    }
+  }
+
+  async function unpublish() {
+    const pub = state.publish;
+    if (!pub) return;
+    try {
+      await api('/api/publishes/' + encodeURIComponent(pub.slug), { method: 'DELETE' });
+      state.publish = null;
+      state.publishError = '';
+      state.publishNotice = '已取消发布';
+      renderPublish();
+    } catch (err) {
+      state.publishError = '取消发布失败：' + err.message;
+      renderPublish();
+    }
+  }
+
+  function copyText(text) {
+    if (!text) return Promise.resolve(false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(
+        function () { return true; },
+        function () { return false; }
+      );
+    }
+    return Promise.resolve(false);
+  }
+
+  function copyPublishedLink() {
+    const pub = state.publish;
+    if (!pub) return;
+    copyText(publishedUrl(pub.slug)).then(function (ok) {
+      state.publishNotice = ok ? '链接已复制' : '复制失败，请手动选中地址';
+      renderPublish();
+    });
+  }
+
+  function openPublished() {
+    const pub = state.publish;
+    if (pub) window.open(publishedUrl(pub.slug), '_blank', 'noopener');
+  }
+
+  function exportZip() {
+    const task = currentTask();
+    if (task) window.location.href = '/api/tasks/' + encodeURIComponent(task.id) + '/zip';
+  }
+
+  function closePanels() {
+    [el.publishPanel, el.sharePanel, el.helpPanel].forEach(function (panel) {
+      if (panel) panel.hidden = true;
+    });
+    [el.publishBtn, el.shareBtn, el.helpBtn].forEach(function (btn) {
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function togglePanel(panel, btn) {
+    if (!panel) return;
+    const open = panel.hidden;
+    closePanels();
+    panel.hidden = !open;
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open && panel === el.publishPanel) refreshPublish();
   }
 
   // ---------- 事件绑定 ----------
@@ -871,6 +1261,34 @@
       });
     }
 
+    if (el.historyTabs) {
+      el.historyTabs.addEventListener('click', function (event) {
+        const btn = event.target.closest('[data-tab]');
+        if (btn) setHistoryTab(btn.dataset.tab);
+      });
+    }
+
+    if (el.historyVersions) {
+      el.historyVersions.addEventListener('click', function (event) {
+        const btn = event.target.closest('[data-task-id]');
+        if (btn) restoreVersion(btn.dataset.taskId);
+      });
+    }
+
+    if (el.historyMessageList) {
+      el.historyMessageList.addEventListener('click', function (event) {
+        const btn = event.target.closest('[data-message-id]');
+        if (btn) jumpToMessage(btn.dataset.messageId);
+      });
+    }
+
+    if (el.historySearch) {
+      el.historySearch.addEventListener('input', function () {
+        state.history.query = el.historySearch.value;
+        renderMessageHistory();
+      });
+    }
+
     if (el.chatLog) {
       el.chatLog.addEventListener('click', function (event) {
         const actionBtn = event.target.closest('[data-action]');
@@ -884,6 +1302,7 @@
         state.activeId = card.dataset.taskId;
         renderChat();
         syncPreview(true);
+        refreshPublish();
       });
     }
 
@@ -925,21 +1344,54 @@
 
     el.popout.addEventListener('click', openPreview);
 
-    el.helpBtn.addEventListener('click', function () {
-      const open = el.helpPanel.hidden;
-      el.helpPanel.hidden = !open;
-      el.helpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
+    if (el.helpBtn) {
+      el.helpBtn.addEventListener('click', function () {
+        togglePanel(el.helpPanel, el.helpBtn);
+      });
+    }
+
+    if (el.publishBtn) {
+      el.publishBtn.addEventListener('click', function () {
+        togglePanel(el.publishPanel, el.publishBtn);
+      });
+    }
+
+    if (el.shareBtn) {
+      el.shareBtn.addEventListener('click', function () {
+        togglePanel(el.sharePanel, el.shareBtn);
+        renderPublish();
+      });
+    }
+
+    if (el.publishPrimary) el.publishPrimary.addEventListener('click', publishNow);
+    if (el.publishView) el.publishView.addEventListener('click', openPublished);
+    if (el.publishCopy) el.publishCopy.addEventListener('click', copyPublishedLink);
+    if (el.publishUnpublish) el.publishUnpublish.addEventListener('click', unpublish);
+    if (el.shareCopy) el.shareCopy.addEventListener('click', copyPublishedLink);
+    if (el.shareZip) el.shareZip.addEventListener('click', exportZip);
+
+    if (el.publishSlug) {
+      el.publishSlug.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          publishNow();
+        }
+      });
+      el.publishSlug.addEventListener('input', function () {
+        state.publishError = '';
+      });
+    }
 
     document.addEventListener('click', function (event) {
-      if (!el.helpPanel.hidden) {
-        const insideHelp =
-          el.helpPanel.contains(event.target) || el.helpBtn.contains(event.target);
-        if (!insideHelp) {
-          el.helpPanel.hidden = true;
-          el.helpBtn.setAttribute('aria-expanded', 'false');
-        }
-      }
+      const inPanel =
+        (el.helpPanel && el.helpPanel.contains(event.target)) ||
+        (el.publishPanel && el.publishPanel.contains(event.target)) ||
+        (el.sharePanel && el.sharePanel.contains(event.target));
+      const onTrigger =
+        (el.helpBtn && el.helpBtn.contains(event.target)) ||
+        (el.publishBtn && el.publishBtn.contains(event.target)) ||
+        (el.shareBtn && el.shareBtn.contains(event.target));
+      if (!inPanel && !onTrigger) closePanels();
 
       if (el.historyPanel && !el.historyPanel.hidden) {
         const insideHistory =
@@ -953,10 +1405,7 @@
 
     document.addEventListener('keydown', function (event) {
       if (event.key !== 'Escape') return;
-      if (!el.helpPanel.hidden) {
-        el.helpPanel.hidden = true;
-        el.helpBtn.setAttribute('aria-expanded', 'false');
-      }
+      closePanels();
       closeHistory();
     });
   }
