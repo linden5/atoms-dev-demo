@@ -269,8 +269,10 @@
       } else if (el.input) {
         el.input.focus();
       }
+      return data.session_id;
     } catch (err) {
       showError('新建会话失败：' + err.message);
+      return null;
     }
   }
 
@@ -1022,11 +1024,16 @@
     updateStatus();
   }
 
-  async function send(content) {
+  async function send(content, options) {
+    const opts = options || {};
     const text = String(content || '').trim();
     if (!text || state.busy) return;
 
-    if (!state.sessionId) await createSession();
+    // 首页对话框提交永远开新会话；工作台输入沿用当前会话继续迭代
+    if (opts.newSession || !state.sessionId) {
+      const created = await createSession();
+      if (!created) return;
+    }
     if (!state.sessionId) return;
 
     hideError();
@@ -1434,7 +1441,7 @@
 
     if (el.homeSubmit) {
       el.homeSubmit.addEventListener('click', function () {
-        send(el.homeInput.value);
+        send(el.homeInput.value, { newSession: true });
       });
     }
 
