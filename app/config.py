@@ -54,6 +54,17 @@ ENGINE_MODE_LLM = "llm"
 ENGINE_MODES = (ENGINE_MODE_AUTO, ENGINE_MODE_MOCK, ENGINE_MODE_METAGPT, ENGINE_MODE_LLM)
 
 
+def _explicit_mock() -> bool:
+    """外部是否已明确要求 MOCK（只看环境变量，不看档位文件）。
+
+    MOCK 模式不调模型，档位文件对它没有意义；因此档位有问题时不该把演示兜底挡死。
+    """
+    mode = (os.getenv("ENGINE_MODE") or "").strip().lower()
+    if mode:
+        return mode == ENGINE_MODE_MOCK
+    return (os.getenv("MOCK_ENGINE") or "").strip().lower() in TRUTHY
+
+
 def profile_dir() -> Path:
     """档位文件所在目录：默认 `~/.atoms/llm`，服务器可用 `LLM_PROFILE_DIR` 指到 `/etc/atoms/llm`。"""
     raw = (os.getenv("LLM_PROFILE_DIR") or "").strip()
@@ -94,18 +105,42 @@ def load_profile() -> tuple[str, Path | None]:
         return "", None
 
     if not PROFILE_NAME_RE.match(name):
+        if _explicit_mock():
+            log.warning("已明确指定 MOCK，忽略非法的 LLM_PROFILE=%r", name)
+            return "", None
         raise RuntimeError(
             f"LLM_PROFILE 取值非法：{name!r}；只允许字母、数字、下划线与短横线，最长 32 字符"
         )
 
     path = profile_dir() / f"{name}.env"
     if not path.is_file():
+        if _explicit_mock():
+            log.warning(
+                "已明确指定 MOCK，找不到档位文件 %s，本次忽略；切回真实引擎前必须先补上",
+                path,
+            )
+            return "", None
         raise RuntimeError(
             f"LLM_PROFILE={name} 但找不到档位文件 {path}；"
             f"可用 scripts/switch_model.sh list 查看已有档位，或 init {name} 生成模板"
         )
 
-    for key, value in _parse_profile_file(path).items():
+    try:
+        values = _parse_profile_file(path)
+    except OSError as exc:
+        # systemd 已经通过 EnvironmentFile 注入过变量时，档位文件只是"人看的副本"，
+        # 常见于 root:600 的 /etc/atoms/llm/*.env —— 应用读不到也不该导致启动失败。
+        if all((os.getenv(k) or "").strip() for k in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY")):
+            log.warning("档位文件 %s 不可读（%s），但环境变量已提供完整配置，继续启动", path, exc)
+            return name, path
+        if _explicit_mock():
+            log.warning("已明确指定 MOCK，档位文件 %s 不可读（%s），本次忽略", path, exc)
+            return "", None
+        raise RuntimeError(
+            f"读不到档位文件 {path}（{exc}）；确认权限，或直接设置 LLM_BASE_URL / LLM_MODEL / LLM_API_KEY"
+        ) from exc
+
+    for key, value in values.items():
         if (os.getenv(key) or "").strip():
             continue  # 显式环境变量优先，方便临时覆盖单项而不动档位文件
         os.environ[key] = value
