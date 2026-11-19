@@ -68,14 +68,29 @@ cd ~/atoms-dev-demo
 bash scripts/restart_and_verify.sh dev    # 拉代码 -> 切档 -> 健康检查 -> 模型冒烟，服务未装自动先安装
 ```
 
-等价拆解：`bash scripts/deploy.sh`（同步依赖 → 覆盖 systemd unit → 重启 → 探活）+ `bash scripts/switch_model.sh use <档位>`。
-固定形态：`0.0.0.0:8000` + `deploy/atoms.service`，不使用域名与 80/443；安全组需放行 `8000/TCP`。
-线上检查：`curl -s localhost:8000/health`（应看到 `step=s8 engine=llm`）、`journalctl -u atoms -n 50 --no-pager`。
+等价拆解：`bash scripts/deploy.sh`（拉分支 → 同步依赖 → 渲染 systemd unit → 重启 → 探活）+ `bash scripts/switch_model.sh use <档位>`。
+
+多实例部署：同一台服务器按分支跑两套环境，目录 / 端口 / systemd 服务 / SQLite 数据各自独立：
+
+| 实例 | 分支 | 目录 | 端口 | systemd 服务 |
+|---|---|---|---|---|
+| `accept`（验收，默认） | `main` | `~/atoms-dev-demo` | 8000 | `atoms` |
+| `dev`（开发自测） | `dev` | `~/atoms-dev-demo-dev` | 8001 | `atoms-dev` |
+
+```bash
+INSTANCE=dev bash scripts/deploy.sh                                               # 部署/更新自测环境
+BASE_URL=http://127.0.0.1:8001 bash scripts/verify_s8.sh                          # 验自测环境
+SERVICE=atoms-dev BASE_URL=http://127.0.0.1:8001 bash scripts/switch_model.sh use <档位>  # 给自测环境切档
+```
+
+首次启用自测环境：`git clone -b dev <仓库地址> ~/atoms-dev-demo-dev`。
+固定形态：验收 `0.0.0.0:8000`（服务 `atoms`）、自测 `0.0.0.0:8001`（服务 `atoms-dev`），不使用域名与 80/443；安全组需放行 `8000,8001/TCP`。
+线上检查：`curl -s localhost:8000/health`（验收，应看到 `step=s8 engine=llm`）、`journalctl -u atoms -n 50 --no-pager`；自测实例把端口换成 8001、服务名换成 `atoms-dev`。
 
 ## 回滚
 
 ```bash
-git checkout s7 && bash scripts/deploy.sh          # 回代码
+git checkout s7 && bash scripts/deploy.sh          # 回代码（自测环境加 INSTANCE=dev）
 bash scripts/switch_model.sh use <旧档位>          # 回模型档位（restart_and_verify 失败时也会提示此命令）
 ```
 
