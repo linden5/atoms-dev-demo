@@ -44,7 +44,10 @@ __BRIEF__
    启动时 `fetch(同地址 + "?token=" + window.__ATOMS__.token)` 后 `response.json()` 读回；
 7. 核心逻辑必须正确：输出前用 2-3 个代表性输入（例如计算器算 "2+3"、添加一条记录）在脑中完整走查
    调用链（事件入口 → 校验 → 计算 → 渲染），确认不会被自己的校验规则误拦、结果符合预期；
-8. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
+8. 禁止使用 eval、new Function、Function("...") 这类动态求值（预览 CSP 不放行 unsafe-eval，
+   运行时必被拦，且异常常被 try/catch 吞掉表现为"所有输入都无效"）；表达式计算用手写
+   逐运算符解析或递归下降求值器实现；
+9. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
 """
 
 REVIEW_PROMPT = """你是前端代码审查员。检查下面这个单文件网页应用是否可以交付。
@@ -52,7 +55,8 @@ REVIEW_PROMPT = """你是前端代码审查员。检查下面这个单文件网�
 逐项检查：
 1. 结构完整：有 <!doctype>、<html>、</html>，没有截断；
 2. 有真实交互：至少一个交互会改变界面状态（不是只有 hover 动效）；
-3. 没有外链资源：script/link/img 的 src 或 href 不含 http(s)://；
+3. 没有外链资源：script/link/img 的 src 或 href 不含 http(s)://；也没有 eval / new Function
+   这类动态求值（预览 CSP 不放行 unsafe-eval，运行时必被拦）；
 4. 没有占位内容：没有 `[Company Name]`、`Lorem ipsum` 之类；
 5. 移动端：有 viewport meta，窄屏不会横向溢出；
 6. 中文界面，文案通顺；
@@ -76,6 +80,7 @@ __ISSUES__
 
 约束不变：单文件、CSS/JS 内联、不引用任何外部资源、中文界面、有真实交互、375px 可用；
 禁止使用 localStorage / sessionStorage / cookie（预览沙箱里访问会直接抛错）；
+禁止 eval / new Function 动态求值（预览 CSP 不放行 unsafe-eval）；
 要持久化就用平台注入的 window.__ATOMS__ 存储桥：fetch PUT 保存状态、启动时 GET 读回。
 只输出修正后的完整 HTML（从 <!doctype html> 到 </html>），不要解释。
 
@@ -93,11 +98,13 @@ __REQUIREMENT__
 1. 先定位根因：涉及"某操作报错/无效"时，找到对应的事件处理与校验逻辑逐行走查，确认修复路径，
    不要只改表面文案；
 2. 用一个代表性输入验证修复后的完整调用链确实正确；
-3. 除用户要求外不要重构、不要改视觉风格、不要更换实现方式；
-4. 只输出修改后的完整 HTML（从 <!doctype html> 到 </html>），不要解释、不要 Markdown 围栏；
-5. 约束不变：CSS/JS 全内联、不引用任何外部资源、中文界面、375px 可用；
+3. 禁止 eval / new Function / Function("...") 动态求值（预览 CSP 不放行 unsafe-eval，
+   运行时必被拦）；发现旧代码里有时必须改为手写逐运算符解析或递归下降求值器；
+4. 除用户要求外不要重构、不要改视觉风格、不要更换实现方式；
+5. 只输出修改后的完整 HTML（从 <!doctype html> 到 </html>），不要解释、不要 Markdown 围栏；
+6. 约束不变：CSS/JS 全内联、不引用任何外部资源、中文界面、375px 可用；
    禁止使用 localStorage / sessionStorage / cookie（预览沙箱里访问会直接抛错）；
-6. 用户要求数据"保存 / 持久化 / 本地存储"时，用平台注入的 window.__ATOMS__ 存储桥实现
+7. 用户要求数据"保存 / 持久化 / 本地存储"时，用平台注入的 window.__ATOMS__ 存储桥实现
    （页面运行时已注入，直接可用），并把旧的 localStorage/sessionStorage 代码整体替换：
    保存 fetch(window.__ATOMS__.dataUrl + "?token=" + window.__ATOMS__.token,
    {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(状态对象)})；
