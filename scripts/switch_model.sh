@@ -46,6 +46,14 @@ profile_path() { printf '%s/%s.env' "$PROFILE_DIR" "$1"; }
 
 valid_name() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$'; }
 
+# 当前生效的档位名（从 drop-in 里读；没有 drop-in 说明还在用 unit 默认配置）
+get_current_profile() {
+  local dropin
+  dropin="$(dropin_path)"
+  [ -f "$dropin" ] || { printf ''; return 0; }
+  grep -oE 'Environment=LLM_PROFILE=[^[:space:]]+' "$dropin" | head -n 1 | cut -d= -f3
+}
+
 need_sudo() {
   if [ "$(id -u)" -eq 0 ]; then
     printf ''
@@ -322,4 +330,7 @@ USAGE
   esac
 }
 
-main "$@"
+# 只在直接执行时才进入子命令分发；被其他脚本 source 时只暴露函数，便于复用
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
