@@ -35,97 +35,71 @@
   </header>
 
   <div class="help-panel" id="help-panel" hidden>
-    <h2>这是 S6 版本</h2>
-    <p>主站响应带严格 CSP（只允许同源脚本），预览页用独立 CSP 并放在 <code>sandbox="allow-scripts"</code> 的 iframe 里，生成代码拿不到主站 Cookie。</p>
-    <p>所有响应补了 <code>X-Content-Type-Options</code> 与 <code>Referrer-Policy</code>；主站 HTML 不缓存，部署后刷新即可拿到新版本。</p>
-    <p>空态、失败态、预览加载态都已补齐；完整交付说明见 <code>docs/delivery.md</code>。</p>
-    <p class="help-panel__meta">当前步骤：S6 · 加固与交付（v1.0）</p>
+    <h2>这是 S7 版本</h2>
+    <p>左侧是会话：说一句需求，Agent 会先确认关键信息再生成；生成完成后继续说，就会形成新版本。</p>
+    <p>预览页用独立 CSP 并放在 <code>sandbox="allow-scripts"</code> 的 iframe 里，生成代码拿不到主站 Cookie。</p>
+    <p>多轮上下文只拼最近 1200 字符；任务详情里的 prompt 仍是你这一轮的原话。</p>
+    <p class="help-panel__meta">当前步骤：S7 · 多轮对话</p>
   </div>
 
   <main class="workspace">
-    <aside class="panel" aria-label="需求与任务">
-      <section class="block">
-        <div class="block__head">
-          <h2 class="block__title">需求</h2>
-          <span class="block__meta">
-            <span class="block__hint">Ctrl / ⌘ + Enter 提交</span>
-            <button class="ghost-btn ghost-btn--dense" id="modify-btn" type="button" disabled>继续修改</button>
+    <aside class="chat" aria-label="与智能体的对话">
+      <header class="chat__head">
+        <span class="agent">
+          <span class="agent__avatar" aria-hidden="true">A</span>
+          <span class="agent__body">
+            <span class="agent__name">Alex<span class="agent__role">· 工程师</span></span>
+            <span class="agent__state" id="agent-state" data-state="idle">
+              <span class="agent__dot" aria-hidden="true"></span>
+              <span class="agent__state-text" id="agent-state-text">已就绪</span>
+            </span>
           </span>
+        </span>
+        <span class="chat__actions">
+          <button class="ghost-btn ghost-btn--dense" id="history-btn" type="button" aria-expanded="false" aria-controls="history-panel">历史</button>
+          <button class="ghost-btn ghost-btn--dense" id="new-session-btn" type="button" title="新建会话">新会话</button>
+          <button class="ghost-btn ghost-btn--dense" id="cancel-btn" type="button" hidden>取消</button>
+        </span>
+      </header>
+
+      <div class="history" id="history-panel" hidden>
+        <div class="history__head">
+          <h2 class="history__title">历史会话</h2>
+          <span class="history__count" id="history-count"></span>
         </div>
-        <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
-        <textarea
-          id="requirement-input"
-          class="editor"
-          rows="4"
-          spellcheck="false"
-          placeholder="例如：做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题"
-        ></textarea>
-        <p class="modify-hint" id="modify-hint" hidden>
-          <span id="modify-hint-text"></span>
-          <button class="link-btn" id="modify-cancel" type="button">取消</button>
-        </p>
+        <ul class="history__list" id="history-list"></ul>
+        <button class="ghost-btn history__more" id="history-more" type="button" hidden>加载更多</button>
+      </div>
+
+      <div class="threads" id="session-list" aria-label="最近会话"></div>
+
+      <div class="chat__log" id="chat-log" aria-live="polite"></div>
+
+      <div class="composer">
+        <div class="composer__box">
+          <label class="sr-only" for="requirement-input">描述你要生成的应用</label>
+          <textarea
+            id="requirement-input"
+            class="composer__input"
+            rows="2"
+            spellcheck="false"
+            placeholder="描述你想做的应用，例如：做一个番茄钟，25 分钟专注 + 5 分钟休息"
+          ></textarea>
+          <div class="composer__foot">
+            <span class="composer__kbd">Ctrl / ⌘ + Enter</span>
+            <button class="send-btn" id="submit-btn" type="button" aria-label="生成应用">
+              <span class="primary-btn__label sr-only">生成应用</span>
+              <span class="send-btn__icon" aria-hidden="true">↑</span>
+            </button>
+          </div>
+        </div>
+
         <div class="examples" id="example-list">
           <button class="tag" type="button" data-prompt="做一个番茄钟，25 分钟专注 + 5 分钟休息，深色主题">番茄钟</button>
           <button class="tag" type="button" data-prompt="做一个待办清单，可以添加、勾选和删除，显示剩余数量">待办清单</button>
           <button class="tag" type="button" data-prompt="做一个极简记账面板，记录收支并显示结余">记账面板</button>
         </div>
-        <button class="primary-btn" id="submit-btn" type="button">
-          <span class="primary-btn__label">生成应用</span>
-          <span class="primary-btn__hint" aria-hidden="true">↵</span>
-        </button>
-      </section>
-
-      <section class="block">
-        <div class="block__head">
-          <h2 class="block__title">阶段</h2>
-          <span class="block__meta">
-            <span class="block__hint" id="stage-hint">等待提交</span>
-            <button class="ghost-btn ghost-btn--dense" id="cancel-btn" type="button" hidden>取消</button>
-          </span>
-        </div>
-        <ol class="stages" id="stage-list">
-          <li class="stage" data-stage="planning">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">需求规划</span>
-              <span class="stage__desc">拆解意图与页面结构</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-          <li class="stage" data-stage="coding">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">编码生成</span>
-              <span class="stage__desc">产出可运行的单页应用</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-          <li class="stage" data-stage="checking">
-            <span class="stage__dot" aria-hidden="true"></span>
-            <span class="stage__body">
-              <span class="stage__name">自检与落库</span>
-              <span class="stage__desc">校验产物并持久化</span>
-            </span>
-            <span class="stage__time"></span>
-          </li>
-        </ol>
-      </section>
-
-      <section class="block" id="version-block" hidden>
-        <div class="block__head">
-          <h2 class="block__title">版本链</h2>
-          <span class="block__hint" id="version-hint"></span>
-        </div>
-        <ol class="versions" id="version-list"></ol>
-      </section>
-
-      <section class="block block--grow">
-        <div class="block__head">
-          <h2 class="block__title">任务与版本</h2>
-          <span class="block__hint" id="task-hint">点击切换预览</span>
-        </div>
-        <ul class="tasks" id="task-list"></ul>
-      </section>
+      </div>
     </aside>
 
     <section class="preview" aria-label="预览">
