@@ -29,6 +29,7 @@ from app import llm_cache
 from app.config import settings
 from app.engine.base import EmitFn
 from app.engine.html_utils import (
+    eval_hits,
     external_refs,
     extract_html,
     inspect_html,
@@ -164,6 +165,7 @@ class LLMEngine:
                     "retry_problems": problems,
                     "external_refs": external_refs(html),
                     "placeholders": placeholder_hits(html),
+                    "evals": eval_hits(html),
                     "tokens": self.usage,
                     "steps": self.steps,
                     "profile": settings.llm_profile,
@@ -291,8 +293,8 @@ class LLMEngine:
 
     def _local_checks(self, html: str) -> tuple[list[str], str, list[str]]:
         """正则可查的硬体检：外链被 CSP 拦、占位符是半成品、存储访问必抛
-        SecurityError（平台注入的 __ATOMS__ 存储桥不受影响）。不依赖模型自觉，
-        审查成功与否都执行。"""
+        SecurityError、eval/Function 被 CSP 拦（unsafe-eval 不放行）。
+        不依赖模型自觉，审查成功与否都执行。"""
         issues: list[str] = []
         if external_refs(html):
             issues.append("引用了外链资源，预览时会被拦掉，请改成内联")
@@ -302,6 +304,11 @@ class LLMEngine:
             issues.append(
                 "使用了 localStorage/sessionStorage，预览沙箱会抛错，"
                 "请删除或改用内存变量（持久化用平台注入的 window.__ATOMS__ 存储桥）"
+            )
+        if eval_hits(html):
+            issues.append(
+                "使用了 eval / new Function 动态求值，预览 CSP 不放行 unsafe-eval，"
+                "运行时必被拦且异常常被吞掉，请改用手写逐运算符解析或递归下降求值器"
             )
         return issues, "ok", []
 

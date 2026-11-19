@@ -26,6 +26,8 @@ _EXTERNAL_REF = re.compile(r"""<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)\
 _PLACEHOLDER = re.compile(r"(?<![A-Za-z0-9_$\]])\[(?:[A-Za-z][A-Za-z /&'-]{2,20})\]|(?<![A-Za-z0-9_$\]])lorem ipsum", re.I)
 # 预览 iframe 是 opaque origin（无 allow-same-origin），访问存储 API 会直接抛 SecurityError
 _STORAGE = re.compile(r"\b(?:localStorage|sessionStorage|document\.cookie)\b")
+# 预览 CSP 的 script-src 不含 unsafe-eval（刻意不放行）：eval / new Function 运行时必被拦
+_EVAL = re.compile(r"\beval\s*\(|\bFunction\s*\(")
 
 
 def extract_html(text: str | None) -> str | None:
@@ -77,3 +79,12 @@ def storage_hits(html: str) -> list[str]:
     注意：平台注入的 `window.__ATOMS__` 存储桥不含这些标识符，不会被误伤。
     """
     return [m.group(0) for m in _STORAGE.finditer(html or "")][:5]
+
+
+def eval_hits(html: str) -> list[str]:
+    """预览 CSP 不放行 unsafe-eval；eval / new Function 运行时必被拦。
+
+    计算器类应用常用 Function('...') 动态求值，异常被 try/catch 吞掉后表现为
+    "所有输入都报无效"——静态阅读发现不了，必须在生成端拦住。
+    """
+    return [m.group(0) for m in _EVAL.finditer(html or "")][:5]
