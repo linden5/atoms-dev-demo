@@ -95,14 +95,13 @@ curl -s http://127.0.0.1:8000/api/tasks/$TASK | grep -q '"status":"succeeded"'  
 
 **交付物**：`app/engine/metagpt_engine.py`（内部懒加载 `import metagpt`，单角色，非 Team 全流程）、引擎选择逻辑（`MOCK_ENGINE`）、超时与取消落地、`scripts/gen_once.py`、`scripts/seed_demo.py`（预置 1–2 条成功任务）、`requirements.txt` metagpt 段、`scripts/verify_s4.sh`、`docs/steps/s4.md`。
 
-**风险控制**：按代价从低到高逐级降级，不引入本项目架构之外的部署形态（本项目不使用容器，部署路径始终是 venv + systemd + 8000 端口）：
+**风险控制**：主应用部署形态不变（始终 venv + systemd + 8000 端口），MetaGPT 若必须接入只作为**可选旁挂容器**：
 
-1. `uv pip install --no-cache "faiss-cpu==1.7.4"` 单独重试；仍失败则 `uv python install 3.10` 换小版本（几分钟）
-2. 重装系统镜像为 Ubuntu 22.04（自带 3.10），按 `setup.md` 重来（10–15 分钟；S4 之前数据均为 mock，可丢弃）
-3. 只在本地 WSL 验证引擎能否产出，服务器保持 `MOCK_ENGINE=1`
-4. 保持 `MOCK_ENGINE=1` 交付，MetaGPT 在交付文档中标注"已设计未启用"
+1. 先确认失败点：2026-11 实测全版本都卡在 `lancedb==0.4.0` / `==0.1.16` 已下架，换 Python、换系统、换 WSL 都无效，不要再重装环境
+2. 需要框架能力时走 Docker 官方镜像旁挂成 HTTP 服务（[metagpt-docker.md](metagpt-docker.md)），app 侧换 `ENGINE_MODE=remote`
+3. 不做旁挂时保持 `ENGINE_MODE=llm`（S8 主路径）或 `mock`，并在交付文档标注"MetaGPT pip 不可安装"
 
-第 4 级落地时，本步失败不影响 S3 产物可用性，也不阻塞 S5/S6。
+第 3 级落地时，本步失败不影响既有产物可用性，也不阻塞后续步骤。
 
 **验收**：
 
@@ -171,7 +170,7 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 
 **交付物**：`app/engine/llm_engine.py`（三次 LLM 调用：planning → coding → checking，零新增依赖）+ `app/engine/html_utils.py`（抽出 `extract_html` 共用）+ `ENGINE_MODE=llm` 配置、`publishes` 表与 `/api/tasks/{id}/publish`、`/p/{slug}` 公开访问、`/api/tasks/{id}/zip`、前端 Publish/Share 面板与"预览≠已上线"提示、History 双标签与消息级还原、`scripts/verify_s8.sh`、`docs/steps/s8.md`。
 
-**为什么不接 MetaGPT**：`metagpt==0.8.2` 需 3.11 + `aiohttp==3.8.6`/`faiss-cpu==1.7.4`，安装耗时高、单次生成 5–10 分钟且失败率不可控；8 小时窗口内用自串三次调用的轻量引擎，契约（`Engine.run`）不变，`MOCK_ENGINE=1` 仍可 1 秒降级。
+**为什么不接 MetaGPT**：除了"单次生成 5–10 分钟且失败率不可控"，2026-11 实测发现 **metagpt 0.3.0–0.8.2 全系列已无法从 PyPI 安装**（钉死的 `lancedb==0.1.16` / `==0.4.0` 已下架，另有 pydantic/websockets/typing-extensions 与 fastapi、uvicorn 的冲突，证据见 [metagpt-docker.md](metagpt-docker.md)）。因此本轮用自串三次调用的轻量引擎，契约（`Engine.run`）不变，`MOCK_ENGINE=1` 仍可 1 秒降级；MetaGPT 若要接只能走 Docker 旁挂。
 
 **边界**：不做点选元素编辑（iframe 无 `allow-same-origin`，需 postMessage 桥）、不做 Queue/Plan 卡片、不做 SSE、不做积分与云侧能力。
 
@@ -188,7 +187,7 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | S1 | ✅ | ✅ 10/10 | ✅ [s1.md](steps/s1.md) | ◐ 本地真实浏览器通过，服务器待部署 | ✅ `s1` |
 | S2 | ✅ | ✅ 15/15 | ✅ [s2.md](steps/s2.md) | ◐ 本地 curl + 前端契约通过；浏览器交互与服务器部署待人工确认 | ✅ `s2` |
 | S3 | ✅ | ✅ 28/28 | ✅ [s3.md](steps/s3.md) | ◐ 本地 curl + 真实浏览器交互通过；服务器部署待人工确认 | ✅ `s3` |
-| S4 | ✅ | ✅ 15/15 | ✅ [s4.md](steps/s4.md) | ◐ 本地 curl + 浏览器通过（auto 降级 MOCK）；真实 MetaGPT 生成待服务器验证 | ✅ `s4` |
+| S4 | ✅ | ✅ 15/15 | ✅ [s4.md](steps/s4.md) | ◐ 本地 curl + 浏览器通过（auto 降级 MOCK）；真实 MetaGPT 生成未验证且 pip 路线已封死（见 [metagpt-docker.md](metagpt-docker.md)） | ✅ `s4` |
 | S5 | ✅ | ✅ 22/22 | ✅ [s5.md](steps/s5.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；服务器部署待人工确认 | ✅ `s5` |
 | S6 | ✅ | ✅ 23/23（FULL 模式串跑 s1–s5） | ✅ [s6.md](steps/s6.md) | ◐ 本地 curl + 浏览器通过；公网部署与真实引擎待服务器验证 | ✅ `s6` / `v1.0` |
 | S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ✅ `s7` |

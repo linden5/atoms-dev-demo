@@ -15,6 +15,7 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 | **[docs/agent/git-commit.md](docs/agent/git-commit.md)** | **任何 git 提交之前必读**，提交信息必须符合该规范 |
 | [docs/setup.md](docs/setup.md) / [docs/setup-windows.md](docs/setup-windows.md) | 需要装环境、跑服务、查端口时 |
 | [docs/dev-debug.md](docs/dev-debug.md) | 改完代码怎么验证、问题在哪一层、引擎怎么排障 |
+| [docs/metagpt-docker.md](docs/metagpt-docker.md) | 想接 MetaGPT 时：pip 全版本装不上的证据 + Docker 旁挂方案（产物落在本地） |
 | `docs/steps/sN.md` | 了解某一步具体改了什么、怎么部署与回滚 |
 
 ## 提交规范（摘要，完整版见 docs/agent/git-commit.md）

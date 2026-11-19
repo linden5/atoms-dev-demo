@@ -45,7 +45,7 @@
 
 | 需求（design 1.3） | 状态 | 说明 |
 |---|---|---|
-| 需求 → 生成 | ✅ | 引擎可切换；真实生成需 3.11 + MetaGPT + LLM Key |
+| 需求 → 生成 | ✅ | 引擎四态可切换（llm / mock / metagpt / auto）；真实生成走 `ENGINE_MODE=llm`，零新增依赖。MetaGPT 因 pip 全版本不可安装，只能 Docker 旁挂（[metagpt-docker.md](metagpt-docker.md)） |
 | 生成结果可视化预览 | ✅ | iframe 沙箱，可切 375/768/1000/自适应 |
 | 继续对话修改 | ✅ | 「继续修改」以父任务为基础生成新版本 |
 | 版本历史与回溯 | ✅ | 版本链 v1…vN，点击切回旧产物 |
@@ -54,9 +54,9 @@
 | 数据持久化 | ✅ | SQLite（WAL）+ `workspace/{task_id}/` |
 | 任务 CRUD | ◐ | 创建/查询/取消齐全；未提供删除接口（产物保留优先） |
 | 公网可访问 | ◐ | 形态是 IP:8000，需自行放行安全组；本仓库不含线上地址 |
-| LLM Key 不下发 | ✅ | 只在服务端 `~/.metagpt/config2.yaml` |
+| LLM Key 不下发 | ✅ | 只在服务端环境变量 / `EnvironmentFile=/etc/atoms/llm.env`；`/health` 只回显模型名，不回显 Key 与端点 |
 
-**未在真实 Key 下验证的一环**：MetaGPT 真实生成。本地是 Python 3.14 且无额度，S4 交付的是"代码 + 安装路径 + 排障脚本（`scripts/gen_once.py`）"，服务器上装好 3.11 + metagpt 后先跑一次 `gen_once.py --engine metagpt`，再重启服务确认 `/health` 的 `engine` 变成 `metagpt`。
+**MetaGPT 真实生成：pip 路线已不可用（2026-11 实测）**。metagpt 0.3.0–0.8.2 全系列钉了已从 PyPI 移除的 `lancedb==0.1.16` / `==0.4.0`，依赖解析第一步即失败，与 Python 版本、平台无关；放宽后还有 pydantic / websockets / typing-extensions 与 fastapi、uvicorn 的冲突。S8 起真实生成改走零依赖的 `ENGINE_MODE=llm`；若确实需要 MetaGPT 框架，只能用 Docker 官方镜像旁挂成服务，方案与产物/调试说明见 [metagpt-docker.md](metagpt-docker.md)。
 
 ## 5. 验收方式（可复现）
 
