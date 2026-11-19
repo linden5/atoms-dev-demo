@@ -97,6 +97,16 @@ bash scripts/switch_model.sh list              # 列出所有档位
 
 `use` 在 `/etc/systemd/system/atoms.service.d/llm-profile.conf` 写三行，然后 `daemon-reload` + `restart`，并轮询 `/health` 确认 `profile` 变成目标档位；没变就恢复上一份 drop-in 并重启。
 
+**日常启动/切档一条命令**（推荐，代替上面分步操作）：
+
+```bash
+bash scripts/restart_and_verify.sh dev     # 档位必须显式指定（dev / strong …）
+```
+
+启动前会先打印该档位使用的模型（`档位 dev 将使用模型：glm-5.3-flash`），确认无误才继续。流程：自动同步代码与依赖（deploy.sh）→ 停旧服务 → 按档位启动 → 健康检查 → 模型连通冒烟。
+
+它做四件事，任何一步失败立即停下（非零退出）并提示回滚命令：① 档位校验与切换（含自动回滚）；② `/health` 断言档位/引擎/模型都对上；③ 模型连通冒烟——按档位文件直接向厂商发一次 `max_tokens=64` 的真实请求（费用可忽略），提前暴露 401、404、思考吃光输出预算这三类"服务起来了但模型用不了"的问题；④ 可选追加 `--full` 跑最新步骤的 `verify_sN.sh` 全量验收。`--no-smoke` 跳过冒烟，`--no-deploy` 跳过代码同步。
+
 **安全约定**（照做即可，不合规时 `check` 会给 WARN）：
 
 | 项 | 要求 | 原因 |

@@ -32,6 +32,7 @@
 | `app/config.py`、档位或缓存 | `bash scripts/verify_profile_cache.sh`（13 项断言，不需要服务与 Key） |
 | `app/planner.py` 澄清规则/上下文拼接 | `python -c` 直接喂 `history` 列表，不启服务 |
 | `app/db.py` schema | 删掉 `data/app.db` 重建，再用 `verify_s3.sh` 回归（schema 只增不改） |
+| 每次部署/切档启动 | `bash scripts/restart_and_verify.sh <档位>`：先打印所用模型，再同步代码、停旧服务、启动、健康检查、模型冒烟，失败即停 |
 | 提交前 | 对应步骤的 `verify_sN.sh` + 真实浏览器走主链路 |
 
 服务启动（PowerShell）：
