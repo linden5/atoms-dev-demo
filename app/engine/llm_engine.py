@@ -41,6 +41,13 @@ log = logging.getLogger("atoms.engine.llm")
 MAX_ATTEMPTS = 2          # 编码阶段最多尝试两次（第二次带上失败原因）
 RETRY_BACKOFF_S = 1.5     # 限流/5xx 的退避
 ISSUE_LIMIT = 5
+# 自检温度：不能用 0，智谱等厂商的 OpenAI 兼容模式会拒绝 temperature=0（400）
+REVIEW_TEMPERATURE = 0.01
+
+
+def _endpoint() -> str:
+    """实际请求的完整 URL；报错时原样打出来，省得靠猜 base_url 拼对没拼对。"""
+    return f"{settings.llm_base_url}/chat/completions"
 
 
 def llm_available() -> tuple[bool, str]:
@@ -127,13 +134,14 @@ class LLMEngine:
             encoding="utf-8",
         )
         log.info(
-            "LLM 生成完成 task=%s model=%s chars=%d issues=%d cache_hits=%d elapsed=%.1fs",
+            "LLM 生成完成 task=%s model=%s chars=%d issues=%d cache_hits=%d elapsed=%.1fs 产物目录=%s",
             task_id,
             self.model,
             len(html),
             len(issues),
             self.cache_hits,
             time.perf_counter() - started,
+            workdir.resolve(),
         )
 
     # ---------- 三个阶段 ----------
@@ -166,14 +174,18 @@ class LLMEngine:
         )
 
     async def _review(self, html: str, prompt: str) -> list[str]:
-        """返回需要修正的问题列表；解析失败按"没有问题"处理，不阻断交付。"""
+        """返回需要修正的问题列表；解析失败按"没有问题"处理，不阻断交付。
+
+        温度用 0.01 而不是 0：部分厂商（如智谱的 OpenAI 兼容模式）明确不接受
+        `temperature=0`，会返回 400 让自检被静默跳过——那等于审查没跑，问题却看不出来。
+        """
         try:
             text = await self._step(
                 "checking",
                 REVIEW_PROMPT,
                 {"html": html},
                 max_tokens=600,
-                temperature=0.0,
+                temperature=REVIEW_TEMPERATURE,
             )
         except RuntimeError as exc:  # 审查本身失败不该让整个任务失败
             log.warning("自检调用失败，跳过：%s", exc)
@@ -276,6 +288,7 @@ class LLMEngine:
                 f"base={settings.llm_base_url}",
                 f"temp={settings.llm_temperature if temperature is None else temperature}",
                 f"max_tokens={max_tokens}",
+                f"effort={settings.llm_reasoning_effort or '-'}",
                 # 测试可用 ATOMS_CACHE_TAG 隔离不同场景，正常部署留空
                 f"tag={os.getenv('ATOMS_CACHE_TAG') or '-'}",
             )
@@ -298,6 +311,10 @@ class LLMEngine:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if settings.llm_reasoning_effort:
+            # 部分推理模型（如智谱 GLM-5.3 系列）无法关闭思考，默认强度会把 max_tokens
+            # 全部吃在 reasoning_tokens 上、只返回空 content；low 能显著压缩思考开销。
+            payload["reasoning_effort"] = settings.llm_reasoning_effort
         last_error = ""
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
@@ -319,7 +336,7 @@ class LLMEngine:
         """同步 HTTP（在线程里跑）。刻意只用标准库，避免为一次 POST 引入 httpx。"""
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
-            f"{settings.llm_base_url}/chat/completions",
+            _endpoint(),
             data=body,
             method="POST",
             headers={
@@ -343,7 +360,17 @@ class LLMEngine:
         if content is None:
             content = choices[0].get("text") or ""
         usage = data.get("usage") or {}
-        return str(content), usage
+        text = str(content or "")
+        if not text.strip():
+            # 空 content 几乎都是"思考把预算吃光"，直接说清楚，别让它伪装成"输出过短"
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+            if reasoning:
+                raise RuntimeError(
+                    f"模型把输出预算都用在思考上（reasoning_tokens={reasoning}，"
+                    f"max_tokens={payload.get('max_tokens')}），返回内容为空；"
+                    "调大 LLM_MAX_TOKENS，或设置 LLM_REASONING_EFFORT=low 降低思考强度"
+                )
+        return text, usage
 
 
 # ---------- 小工具 ----------
@@ -370,12 +397,17 @@ def _humanize(exc: Exception) -> str:
         if exc.code in (401, 403):
             return f"LLM 鉴权失败（HTTP {exc.code}），请检查 LLM_API_KEY"
         if exc.code == 404:
-            return "LLM 接口不存在（HTTP 404），请检查 LLM_BASE_URL 是否需要带 /v1"
+            # 端点拼错是 404 的头号原因，直接把实际请求的 URL 摆出来，别让人猜
+            return (
+                f"LLM 接口不存在（HTTP 404）：{_endpoint()}；"
+                "确认 LLM_BASE_URL 是否包含正确的版本路径"
+                "（OpenAI/DeepSeek 需 /v1，智谱是 /api/paas/v4，且引擎会自动补 /chat/completions）"
+            )
         if exc.code == 429:
             return "LLM 限流或额度不足（HTTP 429），稍后重试或换模型"
         return f"LLM 请求失败（HTTP {exc.code}）{('：' + detail) if detail else ''}"
     if isinstance(exc, urllib.error.URLError):
-        return f"连不上 LLM 端点：{exc.reason}"
+        return f"连不上 LLM 端点：{exc.reason}（{_endpoint()}）"
     return f"{type(exc).__name__}: {exc}"
 
 

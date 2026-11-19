@@ -168,6 +168,8 @@ class Settings:
     llm_timeout: int
     llm_max_tokens: int
     llm_temperature: float
+    # 思考强度（low/medium/high）。部分推理模型始终思考，默认强度会吃光 max_tokens
+    llm_reasoning_effort: str
     # 能力档：`llm_profile` 是档位名（只用于展示与日志），文件路径便于排障
     llm_profile: str
     llm_profile_file: Path | None
@@ -242,6 +244,7 @@ def load_settings() -> Settings:
         llm_timeout=_int("LLM_TIMEOUT", 120),
         llm_max_tokens=_int("LLM_MAX_TOKENS", 8000),
         llm_temperature=_float("LLM_TEMPERATURE", 0.6),
+        llm_reasoning_effort=(os.getenv("LLM_REASONING_EFFORT") or "").strip().lower(),
         llm_profile=profile,
         llm_profile_file=profile_file,
         cache_dir=Path(os.getenv("LLM_CACHE_DIR") or (workspace_dir / ".cache")).resolve(),
