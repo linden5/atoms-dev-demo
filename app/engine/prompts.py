@@ -75,8 +75,8 @@ FIX_PROMPT = """你是资深前端工程师。下面这个单文件网页应用�
 __ISSUES__
 
 约束不变：单文件、CSS/JS 内联、不引用任何外部资源、中文界面、有真实交互、375px 可用；
-禁止使用 localStorage / sessionStorage / cookie（预览沙箱禁用，数据只存内存或用平台注入的
-window.__ATOMS__ 存储桥）。
+禁止使用 localStorage / sessionStorage / cookie（预览沙箱里访问会直接抛错）；
+要持久化就用平台注入的 window.__ATOMS__ 存储桥：fetch PUT 保存状态、启动时 GET 读回。
 只输出修正后的完整 HTML（从 <!doctype html> 到 </html>），不要解释。
 
 当前页面：
@@ -96,8 +96,13 @@ __REQUIREMENT__
 3. 除用户要求外不要重构、不要改视觉风格、不要更换实现方式；
 4. 只输出修改后的完整 HTML（从 <!doctype html> 到 </html>），不要解释、不要 Markdown 围栏；
 5. 约束不变：CSS/JS 全内联、不引用任何外部资源、中文界面、375px 可用；
-   禁止使用 localStorage / sessionStorage / cookie（预览沙箱禁用，数据只存内存或用
-   平台注入的 window.__ATOMS__ 存储桥）。
+   禁止使用 localStorage / sessionStorage / cookie（预览沙箱里访问会直接抛错）；
+6. 用户要求数据"保存 / 持久化 / 本地存储"时，用平台注入的 window.__ATOMS__ 存储桥实现
+   （页面运行时已注入，直接可用），并把旧的 localStorage/sessionStorage 代码整体替换：
+   保存 fetch(window.__ATOMS__.dataUrl + "?token=" + window.__ATOMS__.token,
+   {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(状态对象)})；
+   启动时 fetch(同地址 + "?token=" + window.__ATOMS__.token) 后 response.json() 读回，
+   读不到就用默认状态。这是预览里唯一能"刷新后数据保留"的方式。
 
 当前页面：
 __HTML__

@@ -191,7 +191,7 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 
 **迭代修复（revision 分支，S10）**：编排层（`app/tasks.py::start`）发现任务有 `parent_id` 且父版本入口 HTML 可读时，把父版本代码经 `Engine.run(parent_html=...)` 交给 LLM 引擎，引擎改走 `REVISION_PROMPT`（旧代码 + 用户本轮原话 → 改稿），**跳过 planning**，不再把"修复 XX"当全新需求盲重写。约束：父版本 HTML 超过 60KB 时只瘦身 `<script>` 之前的注释与空白（`_slim_parent_html`），逻辑代码绝不截断；父版本产物缺失或不可读时退回全新生成并记 warning。`Engine.run` 契约新增可选参数 `parent_html` / `requirement`（只对 LLM 引擎有意义，其余引擎忽略），向后兼容。
 
-**自检与体检（S10 强化）**：`REVIEW_PROMPT` 从 6 项结构检查扩为 8 项，新增"沙箱约束（禁 localStorage/sessionStorage/cookie，`window.__ATOMS__` 存储桥除外）"与"功能正确性（对核心交互做代表性输入走查）"，输出新增 `verified` 字段（模型自报已验证的交互），落 `meta.json` 的 `verified_interactions`。本地体检三条硬问题（外链、占位符、存储 API——`html_utils.storage_hits`）**先于模型意见且不受模型 `ok=true` 影响**，命中即触发修正。`meta.json` 新增 `review_status`：`ok` / `parse_failed`（模型输出不是 JSON）/ `call_failed`（审查调用失败）——此前解析失败完全静默，排障时分不清"审查通过"还是"审查没跑"。
+**自检与体检（S10 强化）**：`REVIEW_PROMPT` 从 6 项结构检查扩为 8 项，新增"沙箱约束（禁 localStorage/sessionStorage/cookie，`window.__ATOMS__` 存储桥除外）"与"功能正确性（对核心交互做代表性输入走查）"，输出新增 `verified` 字段（模型自报已验证的交互），落 `meta.json` 的 `verified_interactions`。本地体检三条硬问题（外链、占位符、存储 API——`html_utils.storage_hits`）**先于模型意见且不受模型 `ok=true` 影响**，命中即触发修正。`meta.json` 新增 `review_status`：`ok` / `parse_failed`（模型输出不是 JSON）/ `call_failed`（审查调用失败）——此前解析失败完全静默，排障时分不清"审查通过"还是"审查没跑"。两种失败下**本地硬体检照跑**（外链/占位符/存储是正则可查的硬伤，不依赖模型），发现即进修正循环；模型未解析的原始输出截断落 `meta.review_raw` 供排障。S10 验证期还修了占位符正则误报（`tokens[pos]` 这类合法下标取值不再被当成 `[pos]`）。
 
 选择单角色而非 `Team` 全流程：全流程不可控且更慢，Web 场景需要的是"一次可复现的生成"，不是多角色编排本身。多角色观感通过前端阶段卡片呈现。
 
