@@ -69,10 +69,12 @@ Atoms Demo：输入自然语言需求，由智能体（MetaGPT）生成可运行
 | S5 | 继续修改 + 版本历史（parent 链） | 已完成，tag `s5` |
 | S6 | 加固、交付文档与全量回归 | 已完成，tag `s6` / `v1.0` |
 | S7 | 多轮对话（会话 / 消息 / 追问 / 上下文） | 已完成，tag `s7` |
+| S8 | 真实 LLM 生成（三阶段）+ 发布/分享闭环 + 版本叙事 | 代码完成，本地 `verify_s8.sh` 38/38；**公网部署与真 Key 待执行**，见 [docs/steps/s8.md](docs/steps/s8.md) |
 
 后续工作：
 
-- P0 仍是真实 MetaGPT 生成跑通（`docs/delivery.md` 第 7 节）；没有 3.11 环境时用 `scripts/fake_metagpt.py` 验证引擎交互。
-- P1 是流式输出与 LLM 澄清（`docs/design.md` 4.7 的 `clarify()` 口子）。
+- **S8（代码完成，待公网部署）**：`app/engine/llm_engine.py` 已串起 planning / coding / checking 三次调用，`ENGINE_MODE=llm|mock|metagpt|auto` 可切换；`publishes` 表与 `/p/{slug}` 发布闭环已可用。**剩下的事只有部署**：配好 `LLM_BASE_URL / LLM_MODEL / LLM_API_KEY` 重启，确认公网 `/health` 为 `step=s8 engine=llm`，再跑 `bash scripts/verify_s8.sh`。没有 Key 的环境可用 `python scripts/fake_llm.py` 验证引擎交互。落地记录见 [docs/steps/s8.md](docs/steps/s8.md)。
+- MetaGPT 路线（`docs/delivery.md` 第 7 节）不再是 P0：依赖重、时延不可控，仅在有富余时间时用 `scripts/fake_metagpt.py` 继续验证交互，不阻塞交付。
+- P1 仍是流式输出与 LLM 澄清（`docs/design.md` 4.7 的 `clarify()` 口子）。
 
 详见 [docs/roadmap.md](docs/roadmap.md)。

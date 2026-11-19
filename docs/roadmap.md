@@ -34,6 +34,8 @@
 | S4 | `s4` | 接入真实 MetaGPT 引擎（与 MOCK 可切换）+ 超时/失败/取消 | Python 3.11 运行时、依赖安装、单次生成时延 | 1.5h |
 | S5 | `s5` | 继续修改 + 版本历史（parent 链、历史版本预览切换） | 数据关系与前端状态管理 | 1h |
 | S6 | `s6` / `v1.0` | CSP 与 sandbox 加固、空态错误态、交付文档、全量回归 | 最终验收链路是否闭环 | 1h |
+| S7 | `s7` | 多轮对话（会话 / 消息 / 追问 / 上下文） | 会话驱动的前端状态与澄清规则 | 1h |
+| S8 | `s8`（计划） | 真实 LLM 生成（三阶段）+ 发布/分享闭环 + 版本叙事 + 公网部署 | 「AI 生成」是否为真、链接是否可被外人验收 | 8h（冲刺，见 [sprint-s8.md](sprint-s8.md)） |
 
 ## 4. 各步详情
 
@@ -161,6 +163,22 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 
 **边界**：澄清是规则判断而非 LLM 判断；消息流靠轮询刷新，没有流式输出。
 
+### S8 真实生成与发布闭环（8 小时冲刺）
+
+详细执行清单见 **[sprint-s8.md](sprint-s8.md)**，此处只记结论与边界。
+
+**要解决的真问题**：评审打开公网链接时，`/health` 显示 `engine=mock`——「智能体生成」目前是固定模板。S8 先把这一条变真，再补发布闭环。
+
+**交付物**：`app/engine/llm_engine.py`（三次 LLM 调用：planning → coding → checking，零新增依赖）+ `app/engine/html_utils.py`（抽出 `extract_html` 共用）+ `ENGINE_MODE=llm` 配置、`publishes` 表与 `/api/tasks/{id}/publish`、`/p/{slug}` 公开访问、`/api/tasks/{id}/zip`、前端 Publish/Share 面板与"预览≠已上线"提示、History 双标签与消息级还原、`scripts/verify_s8.sh`、`docs/steps/s8.md`。
+
+**为什么不接 MetaGPT**：`metagpt==0.8.2` 需 3.11 + `aiohttp==3.8.6`/`faiss-cpu==1.7.4`，安装耗时高、单次生成 5–10 分钟且失败率不可控；8 小时窗口内用自串三次调用的轻量引擎，契约（`Engine.run`）不变，`MOCK_ENGINE=1` 仍可 1 秒降级。
+
+**边界**：不做点选元素编辑（iframe 无 `allow-same-origin`，需 postMessage 桥）、不做 Queue/Plan 卡片、不做 SSE、不做积分与云侧能力。
+
+**验收**：`curl http://<公网IP>:8000/health` 出现 `step=s8` 与 `engine=llm`；无痕窗口能打开 `/p/{slug}`；`bash scripts/verify_s8.sh` 全绿且 s1–s7 不退化。
+
+**回滚**：设 `ENGINE_MODE=mock` 重启即可退回演示态；发布功能可按 `/p/` 前缀整体下线，数据库新表保留不影响旧代码。
+
 ## 5. 进度跟踪
 
 图例：✅ 完成｜◐ 部分完成｜⬜ 未开始
@@ -174,6 +192,7 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | S5 | ✅ | ✅ 22/22 | ✅ [s5.md](steps/s5.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；服务器部署待人工确认 | ✅ `s5` |
 | S6 | ✅ | ✅ 23/23（FULL 模式串跑 s1–s5） | ✅ [s6.md](steps/s6.md) | ◐ 本地 curl + 浏览器通过；公网部署与真实引擎待服务器验证 | ✅ `s6` / `v1.0` |
 | S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ✅ `s7` |
+| S8 | ✅ | ✅ 38/38（s6 23/23、s7 18/18 回归通过） | ✅ [s8.md](steps/s8.md) | ◐ 本地用 `scripts/fake_llm.py` + 真实浏览器通过；公网仍是 s6+mock，真实 Key 待部署时验证 | ⬜ 公网验收后打 tag `s8` |
 
 每完成一格就更新本表，避免"看起来做完了"与"实际能演示"之间的偏差。
 
@@ -196,4 +215,5 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | [setup.md](setup.md) / [setup-windows.md](setup-windows.md) | 环境搭建（uv / Python 3.11 / LLM 配置） |
 | [dev-debug.md](dev-debug.md) | 开发与调试方式：分层验证、引擎排障、多轮与版本链自检 |
 | `docs/steps/sN.md` | 每步落地后补写：改了什么、怎么部署、怎么回滚 |
+| [sprint-s8.md](sprint-s8.md) | 8 小时冲刺的执行清单：任务、接口设计、排期、降级预案 |
 | `docs/delivery.md` | 最终交付说明（S6 产出） |
