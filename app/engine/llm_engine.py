@@ -85,6 +85,8 @@ class LLMEngine:
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.steps: list[dict[str, Any]] = []
         self.cache_hits = 0
+        # 自检输出不是 JSON 时的原文（截断），落 meta 供排障；每次 run 重置
+        self.review_raw: str | None = None
 
     # ---------- 对外入口 ----------
 
@@ -105,6 +107,7 @@ class LLMEngine:
         """
         workdir.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
+        self.review_raw = None  # 引擎实例可能被多任务复用，避免串到上一个任务的记录里
 
         if parent_html:
             # 迭代修复：拿父版本代码当上下文，用户原话当需求；简报留空，标题走需求兜底
@@ -153,6 +156,7 @@ class LLMEngine:
                     "chars": len(html),
                     "issues": issues,
                     "review_status": review_status,
+                    "review_raw": self.review_raw,
                     "verified_interactions": verified,
                     "fixed": fixed,
                     "retry_problems": problems,
@@ -248,8 +252,9 @@ class LLMEngine:
 
         温度用 0.01 而不是 0：部分厂商（如智谱的 OpenAI 兼容模式）明确不接受
         `temperature=0`，会返回 400 让自检被静默跳过——那等于审查没跑，问题却看不出来。
-        review_status：ok = 审查跑完；parse_failed = 模型输出不是 JSON（此前完全静默，
-        排障时看不出审查到底跑没跑）；call_failed = 审查调用本身失败。
+        review_status：ok = 审查跑完；parse_failed = 模型输出不是 JSON；call_failed =
+        审查调用本身失败。两种失败都不阻断交付，但本地硬体检照跑——外链/占位符/
+        存储是正则可查的硬伤，不该因为模型不配合而漏网。
         verified 取自模型自报的 verified 字段，落 meta.json 供核对。
         """
         try:
@@ -262,17 +267,30 @@ class LLMEngine:
                 emit=emit,
             )
         except RuntimeError as exc:  # 审查本身失败不该让整个任务失败
-            log.warning("自检调用失败，跳过：%s", exc)
-            return [], "call_failed", []
+            log.warning("自检调用失败，本地体检兜底：%s", exc)
+            issues, _, _ = self._local_checks(html)
+            return issues, "call_failed", []
 
         data = _parse_json_object(text)
         if data is None:
-            log.warning("自检输出不是 JSON，跳过修正：%s", (text or "")[:120])
-            return [], "parse_failed", []
+            # 模型输出存进 meta（截断），排障时能看到它到底说了什么
+            self.review_raw = (text or "")[:400]
+            log.warning("自检输出不是 JSON，本地体检兜底：%s", (text or "")[:120])
+            issues, _, _ = self._local_checks(html)
+            return issues, "parse_failed", []
 
         verified = [str(v).strip() for v in (data.get("verified") or []) if str(v).strip()]
-        # 本地体检的硬问题放前面且不依赖模型自觉：外链会被 CSP 拦，占位符是半成品，
-        # 存储访问在 opaque origin 下必抛 SecurityError（平台注入的 __ATOMS__ 存储桥不受影响）
+        issues, _, _ = self._local_checks(html)
+        if data.get("ok") is not True:
+            issues.extend(
+                str(item).strip() for item in (data.get("issues") or []) if str(item).strip()
+            )
+        return issues[:ISSUE_LIMIT], "ok", verified
+
+    def _local_checks(self, html: str) -> tuple[list[str], str, list[str]]:
+        """正则可查的硬体检：外链被 CSP 拦、占位符是半成品、存储访问必抛
+        SecurityError（平台注入的 __ATOMS__ 存储桥不受影响）。不依赖模型自觉，
+        审查成功与否都执行。"""
         issues: list[str] = []
         if external_refs(html):
             issues.append("引用了外链资源，预览时会被拦掉，请改成内联")
@@ -283,11 +301,7 @@ class LLMEngine:
                 "使用了 localStorage/sessionStorage，预览沙箱会抛错，"
                 "请删除或改用内存变量（持久化用平台注入的 window.__ATOMS__ 存储桥）"
             )
-        if data.get("ok") is not True:
-            issues.extend(
-                str(item).strip() for item in (data.get("issues") or []) if str(item).strip()
-            )
-        return issues[:ISSUE_LIMIT], "ok", verified
+        return issues, "ok", []
 
     async def _fix(self, html: str, issues: list[str], emit: EmitFn) -> str:
         """带问题清单重写一次；修完仍不合格就保留原稿（宁可原稿能跑）。"""
