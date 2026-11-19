@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import io
+import json
 import platform
+import re
 import sqlite3
 import time
 import zipfile
@@ -15,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,17 +28,48 @@ router = APIRouter()
 
 _STARTED_AT = time.monotonic()
 
-# 预览响应的 CSP：禁止外联脚本，只允许自身、内联与 data/blob
+# 预览响应的 CSP：禁止外联脚本，只允许自身、内联与 data/blob。
+# form-action 'self'：沙箱开了 allow-forms 后表单可以提交，限死目标为同源，
+# 防止生成的代码用 form POST 把内存里的数据外传（fetch 已被 connect-src 'self' 拦住）。
 PREVIEW_CSP = (
     "default-src 'self' 'unsafe-inline' data: blob:; "
     "img-src 'self' data: blob:; "
     "script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline'; "
-    "connect-src 'self'"
+    "connect-src 'self'; "
+    "form-action 'self'"
 )
 
 HTML_MEDIA_TYPE = "text/html; charset=utf-8"
 MAX_PROMPT_CHARS = 2000
+
+# 应用存储（S9）：预览沙箱禁用 localStorage，生成应用的数据由平台代管。
+# opaque origin 下 fetch 是跨源请求（Origin: null），这几个端点必须带 ACAO；
+# 令牌放 URL（沙箱不带 cookie），单份数据限 64KB 防滥用。
+MAX_TASK_DATA_BYTES = 65536
+DATA_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store",
+}
+
+_HEAD_CLOSE = re.compile(r"</head\s*>", re.I)
+
+
+def _inject_atoms(task_id: str, html: str) -> str:
+    """往预览/公开页 HTML 注入 `window.__ATOMS__`（存储地址 + 访问令牌）。
+
+    存储按版本链根任务归档（见 db.ensure_task_data），迭代不丢数据；
+    找不到 </head> 时整体前置，保证任何形态的产物都能拿到引导配置。
+    """
+    bootstrap = {
+        "dataUrl": f"/api/tasks/{task_id}/data",
+        "token": db.ensure_task_data(task_id),
+    }
+    snippet = f"<script>window.__ATOMS__={json.dumps(bootstrap, separators=(',', ':'))};</script>"
+    match = _HEAD_CLOSE.search(html)
+    if match:
+        return html[: match.start()] + snippet + html[match.start() :]
+    return snippet + html
 
 
 def _now() -> str:
@@ -264,10 +297,11 @@ def _entry_path(task_id: str) -> Path:
 
 @router.get("/api/tasks/{task_id}/preview", tags=["artifacts"], summary="产物主 HTML")
 @router.head("/api/tasks/{task_id}/preview", include_in_schema=False)
-async def preview(task_id: str) -> FileResponse:
+async def preview(task_id: str) -> Response:
     path = _entry_path(task_id)
-    return FileResponse(
-        path,
+    html = path.read_text(encoding="utf-8", errors="replace")
+    return Response(
+        content=_inject_atoms(task_id, html),
         media_type=HTML_MEDIA_TYPE,
         headers={"Content-Security-Policy": PREVIEW_CSP, "Cache-Control": "no-store"},
     )
@@ -275,7 +309,7 @@ async def preview(task_id: str) -> FileResponse:
 
 @router.get("/api/tasks/{task_id}/files/{relative:path}", tags=["artifacts"], summary="产物中的静态文件")
 @router.head("/api/tasks/{task_id}/files/{relative:path}", include_in_schema=False)
-async def artifact_file(task_id: str, relative: str) -> FileResponse:
+async def artifact_file(task_id: str, relative: str) -> Response:
     """路径必须落在 `workspace/{task_id}/` 内，越界与不存在的文件都返回 404。"""
     if db.get_task(task_id) is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -284,11 +318,15 @@ async def artifact_file(task_id: str, relative: str) -> FileResponse:
     if path is None:
         raise HTTPException(status_code=404, detail="artifact not found")
 
-    headers = {"Cache-Control": "no-store"}
-    # 预览 HTML 走同一个 CSP；其它静态资源不需要
+    # HTML 注入 __ATOMS__ 并带预览 CSP；其它静态资源不需要
     if path.suffix.lower() in {".html", ".htm"}:
-        headers["Content-Security-Policy"] = PREVIEW_CSP
-    return FileResponse(path, headers=headers)
+        html = path.read_text(encoding="utf-8", errors="replace")
+        return Response(
+            content=_inject_atoms(task_id, html),
+            media_type=HTML_MEDIA_TYPE,
+            headers={"Content-Security-Policy": PREVIEW_CSP, "Cache-Control": "no-store"},
+        )
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 # ---------- 发布 / 分享 ----------
@@ -418,6 +456,62 @@ async def export_zip(task_id: str) -> Response:
     )
 
 
+# ---------- 应用存储（S9） ----------
+#
+# 契约（docs/design.md 4.9）：
+# - GET  无 token / token 错 → 403；任务不存在 → 404；未写过 → 返回 "{}"
+# - PUT  合法 JSON 且 ≤64KB → 200；超限 413；非法 JSON 400
+# - 读写都带 ACAO:*（opaque origin 的 fetch 是跨源请求），PUT 前浏览器会先发 OPTIONS 预检
+# - token 在注入的 window.__ATOMS__ 里，按版本链根任务校验；错误令牌不给枚举线索，统一 403
+
+
+@router.get("/api/tasks/{task_id}/data", tags=["artifacts"], summary="读取应用存储")
+async def read_task_data(
+    task_id: str, token: str = Query(default="", max_length=64)
+) -> Response:
+    if db.get_task(task_id) is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not db.data_token_matches(task_id, token):
+        raise HTTPException(status_code=403, detail="invalid token")
+    text = db.get_task_data_raw(task_id) or "{}"
+    return Response(content=text, media_type="application/json", headers=DATA_CORS_HEADERS)
+
+
+@router.put("/api/tasks/{task_id}/data", tags=["artifacts"], summary="写入应用存储（整包覆盖）")
+async def write_task_data(
+    task_id: str, request: Request, token: str = Query(default="", max_length=64)
+) -> Response:
+    if db.get_task(task_id) is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not db.data_token_matches(task_id, token):
+        raise HTTPException(status_code=403, detail="invalid token")
+
+    body = await request.body()
+    if len(body) > MAX_TASK_DATA_BYTES:
+        raise HTTPException(status_code=413, detail="应用存储超出 64KB 上限")
+    text = body.decode("utf-8", errors="replace") if body else "{}"
+    try:
+        json.loads(text)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="应用存储必须是合法 JSON") from None
+    db.set_task_data_raw(task_id, text)
+    return Response(content='{"ok":true}', media_type="application/json", headers=DATA_CORS_HEADERS)
+
+
+@router.options("/api/tasks/{task_id}/data", include_in_schema=False)
+async def preflight_task_data(task_id: str) -> Response:
+    """CORS 预检：PUT + application/json 不是简单请求，浏览器会先问一次。"""
+    return Response(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        },
+    )
+
+
 _PUBLIC_404 = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>页面不存在</title>
@@ -453,7 +547,12 @@ async def public_app(slug: str) -> Response:
         return _public_404()
     if path is None:
         return _public_404()
-    return FileResponse(path, media_type=HTML_MEDIA_TYPE, headers=PUBLIC_HEADERS)
+    html = path.read_text(encoding="utf-8", errors="replace")
+    return Response(
+        content=_inject_atoms(task.id, html),
+        media_type=HTML_MEDIA_TYPE,
+        headers=PUBLIC_HEADERS,
+    )
 
 
 @router.get("/p/{slug}/files/{relative:path}", summary="已发布应用的静态资源")
@@ -466,7 +565,13 @@ async def public_asset(slug: str, relative: str) -> Response:
     path = tasks.resolve_artifact(task.id, relative)
     if path is None:
         raise HTTPException(status_code=404, detail="not found")
-    headers = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
     if path.suffix.lower() in {".html", ".htm"}:
-        headers["Content-Security-Policy"] = PREVIEW_CSP
-    return FileResponse(path, headers=headers)
+        html = path.read_text(encoding="utf-8", errors="replace")
+        return Response(
+            content=_inject_atoms(task.id, html),
+            media_type=HTML_MEDIA_TYPE,
+            headers={**PUBLIC_HEADERS, "Content-Security-Policy": PREVIEW_CSP},
+        )
+    return FileResponse(
+        path, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
+    )
