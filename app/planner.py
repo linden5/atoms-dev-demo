@@ -101,3 +101,44 @@ def build_prompt(history: list[dict], requirement: str | None = None) -> str:
     target = (requirement or "").strip()
     tail = f"请基于以上对话实现最终需求：{target}" if target else "请基于以上对话实现最终需求"
     return f"下面是用户与你的对话记录（按时间顺序）。\n\n{body}\n\n{tail}。只输出单文件 HTML。"
+
+
+# ---------- 版本引用（S10 P2：提示词指定"在哪个版本上改"） ----------
+
+# -1 表示"上一版"类相对指代，由调用方结合链长解析；None 表示没有显式版本引用
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_V_REF = re.compile(r"(?<![a-z0-9])v(\d+)(?![.\d])", re.IGNORECASE)
+_REF_PREV = re.compile(r"上一?个?版|前一个?版|之前那版|上一次(生成|的版本)|上次(生成|的版本)")
+_REF_N = re.compile(r"第\s*([0-9一二三四五六七八九十]+)\s*版|版本\s*([0-9]+)")
+# 疑似语义指代但规则未命中时，才值得花一次 LLM 调用去兜底
+_REF_HINTS = re.compile(r"那版|哪一?版|之前(的|那)|恢复|回退|回到|原先|原来(的|那)|往回")
+
+
+def parse_version_ref(text: str) -> int | None:
+    """从用户消息里解析显式版本引用；规则命中走零成本路径，未命中由 LLM 兜底。
+
+    返回：None = 没有引用（含"最新版"这类等于默认行为的说法）；
+    -1 = 上一版；n >= 1 = 第 n 版（与 /versions 的 v1…vN 编号一致）。
+    """
+    if not text:
+        return None
+    if _REF_PREV.search(text):
+        return -1
+    for pattern in (_V_REF, _REF_N):
+        match = pattern.search(text)
+        if not match:
+            continue
+        raw = next((g for g in match.groups() if g), "")
+        number = _CN_NUM.get(raw)
+        if number is None:
+            try:
+                number = int(raw)
+            except ValueError:
+                return None
+        return number if number >= 1 else None
+    return None
+
+
+def looks_like_version_reference(text: str) -> bool:
+    """规则未命中时判断是否值得花一次 LLM 调用做语义指代解析。"""
+    return bool(text) and bool(_REF_HINTS.search(text))

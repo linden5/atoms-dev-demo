@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -29,6 +30,10 @@ log = logging.getLogger("atoms.tasks")
 SKIP_DIRS = {"__pycache__", "node_modules", ".git", ".venv"}
 # 产物体积上限（单文件 / 单任务），防止异常产物把磁盘写满
 ERROR_MAX_CHARS = 500
+# 迭代修复时父版本 HTML 超过该长度才做瘦身（只截头部注释与空白，<script> 必须完整保留）
+REVISION_HTML_LIMIT = 60_000
+
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 _semaphore: asyncio.Semaphore | None = None
 _engine: Engine | None = None
@@ -154,13 +159,65 @@ async def start(
     # S9：建任务时同步建应用存储行（token 生成），预览注入 window.__ATOMS__ 时直接可用
     db.ensure_task_data(task_id)
 
-    handle = asyncio.create_task(_run(task_id, engine_prompt or prompt), name=f"task:{task_id}")
+    # 迭代修复：父版本产物存在时把旧代码交给引擎（REVISION_PROMPT 分支），不再盲重写
+    parent_html = _parent_html(parent_id)
+    if parent_id and parent_html is None:
+        log.warning("父版本 %s 产物缺失或不可读，退回全新生成 parent=%s", parent_id, parent_id)
+
+    handle = asyncio.create_task(
+        _run(task_id, engine_prompt or prompt, parent_html=parent_html, requirement=prompt),
+        name=f"task:{task_id}",
+    )
     _running[task_id] = handle
-    log.info("任务入队 id=%s parent=%s prompt=%r", task_id, parent_id, prompt[:80])
+    log.info(
+        "任务入队 id=%s parent=%s revision=%s prompt=%r",
+        task_id,
+        parent_id,
+        parent_html is not None,
+        prompt[:80],
+    )
     return task
 
 
-async def _run(task_id: str, engine_prompt: str) -> None:
+def _parent_html(parent_id: str | None) -> str | None:
+    """读父版本入口 HTML；没有 parent / 产物缺失 / 读文件失败一律返回 None（退回全新生成）。"""
+    if not parent_id:
+        return None
+    parent = db.get_task(parent_id)
+    if parent is None:
+        return None
+    entry = pick_entry([a.path for a in db.list_artifacts(parent_id) if a.kind == "html"])
+    if entry is None:
+        return None
+    target = resolve_artifact(parent_id, entry)
+    if target is None:
+        return None
+    try:
+        html = target.read_text(encoding="utf-8")
+    except OSError:
+        log.warning("父版本产物读取失败 parent=%s entry=%s", parent_id, entry)
+        return None
+    return _slim_parent_html(html)
+
+
+def _slim_parent_html(html: str) -> str:
+    """父版本 HTML 过长时只瘦身头部（注释与空白），完整保留 <script> 及其后内容。
+
+    迭代修复的核心是"引擎能看到旧代码"，宁可超长也不能把逻辑截掉；
+    瘦身只处理第一个 <script 之前的部分（通常是 <head> 里的样式与注释）。
+    """
+    if len(html) <= REVISION_HTML_LIMIT:
+        return html
+    cut = html.find("<script")
+    head, rest = (html, "") if cut < 0 else (html[:cut], html[cut:])
+    head = _HTML_COMMENT.sub("", head)
+    head = re.sub(r"[ \t]*\n[ \t]*\n+", "\n", head)
+    slimmed = head + rest
+    log.info("父版本 HTML 瘦身：%d → %d 字符（<script> 未动）", len(html), len(slimmed))
+    return slimmed
+
+
+async def _run(task_id: str, engine_prompt: str, parent_html: str | None = None, requirement: str | None = None) -> None:
     started = time.perf_counter()
     task = db.get_task(task_id)
     if task is None:  # 理论上不会发生；防御性返回
@@ -176,7 +233,7 @@ async def _run(task_id: str, engine_prompt: str) -> None:
             db.add_event(task_id, models.STATUS_RUNNING)
             engine = get_engine()
             await asyncio.wait_for(
-                _invoke_engine(engine, task, workdir, engine_prompt),
+                _invoke_engine(engine, task, workdir, engine_prompt, parent_html, requirement),
                 timeout=settings.task_timeout,
             )
         _finish_success(task_id, workdir)
@@ -201,7 +258,14 @@ async def _run(task_id: str, engine_prompt: str) -> None:
         )
 
 
-async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path, prompt: str) -> None:
+async def _invoke_engine(
+    engine: Engine,
+    task: models.Task,
+    workdir: Path,
+    prompt: str,
+    parent_html: str | None = None,
+    requirement: str | None = None,
+) -> None:
     async def emit(message: str) -> None:
         # 阶段上报是"尽力而为"：数据库抖动不该把已有产物的任务判为失败
         # 阶段名更新 task.stage；其他消息（如调用重试）只追加事件，不动 stage
@@ -212,7 +276,14 @@ async def _invoke_engine(engine: Engine, task: models.Task, workdir: Path, promp
         except Exception:
             log.warning("事件上报失败 id=%s message=%s", task.id, message, exc_info=True)
 
-    await engine.run(task.id, prompt, workdir, emit)
+    await engine.run(
+        task.id,
+        prompt,
+        workdir,
+        emit,
+        parent_html=parent_html,
+        requirement=requirement,
+    )
 
 
 def _finish_success(task_id: str, workdir: Path) -> None:
@@ -307,12 +378,44 @@ async def start_turn(session_id: str, content: str) -> TurnResult:
         return TurnResult(action="clarify", message=question)
 
     parent_id = db.last_generated_task(session_id)
+    if parent_id:
+        parent_id = await _resolve_parent_by_prompt(parent_id, text)
     engine_prompt = planner.build_prompt(history, text)
     task = await start(text, parent_id=parent_id, engine_prompt=engine_prompt)
     artifact = db.add_message(
         session_id, models.MESSAGE_ROLE_ASSISTANT, "artifact", text, task_id=task.id
     )
     return TurnResult(action="generate", message=artifact, task=task)
+
+
+async def _resolve_parent_by_prompt(latest_task_id: str, text: str) -> str:
+    """提示词指定版本 → 解析成 parent_id；解析不出就用默认（最新成功版本）。
+
+    规则先行（v2 / 第2版 / 上一版 / 最新版，零成本零延迟）；规则未命中且话里
+    疑似有版本指代时，才花一次 LLM 调用做语义解析（"能算三角函数那版"）。
+    任何失败都回退最新版，绝不阻断生成。编号与 /versions 的 v1…vN 一致。
+    """
+    ref = planner.parse_version_ref(text)
+    if ref is None and planner.looks_like_version_reference(text) and engine_name() == "llm":
+        from app.engine.llm_engine import resolve_version_by_llm
+
+        versions = db.list_versions(db.root_of(latest_task_id))
+        if len(versions) >= 2:  # 只有一个版本时无所谓指代，省一次调用
+            ref = await resolve_version_by_llm(text, versions)
+            if ref is not None:
+                log.info("版本引用 LLM 解析命中 ref=v%d", ref)
+    if ref is None:
+        return latest_task_id
+
+    versions = db.list_versions(db.root_of(latest_task_id))
+    index = len(versions) - 1 if ref == -1 else ref
+    if not 1 <= index <= len(versions):
+        log.info("版本引用越界 ref=%r（共 %d 版），退回最新版", ref, len(versions))
+        return latest_task_id
+    resolved = versions[index - 1].id
+    if resolved != latest_task_id:
+        log.info("提示词指定版本：parent %s → %s（v%d/%d）", latest_task_id, resolved, index, len(versions))
+    return resolved
 
 
 async def cancel(task_id: str) -> models.Task | None:
