@@ -239,9 +239,10 @@ for needle in 'id="publish-panel"' 'id="publish-btn"' 'id="share-panel"' 'id="pr
   fi
 done
 
-if printf '%s' "$home_html" | grep -qF 'sandbox="allow-scripts"' && \
+if printf '%s' "$home_html" | grep -qF 'allow-scripts' && \
+   printf '%s' "$home_html" | grep -qF 'allow-forms' && \
    ! printf '%s' "$home_html" | grep -qF 'allow-same-origin'; then
-  ok "预览 iframe 仍是 sandbox=allow-scripts（无 allow-same-origin）"
+  ok "预览 iframe 含 allow-scripts/allow-forms（无 allow-same-origin）"
 else
   no "预览 iframe 的 sandbox 配置被改动"
 fi
