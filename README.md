@@ -40,6 +40,10 @@ uv pip install --python .venv/bin/python -r requirements.txt
 | `1` | 强制 MOCK（演示兜底、本地回归） |
 | `0` | 强制真实引擎，装不上直接报错 |
 
+模型配置与调试：
+- 能力档：把每套 `LLM_*` 配置存成 `~/.atoms/llm/<档位>.env`，启动时 `LLM_PROFILE=<档位>` 加载；服务器上用 `bash scripts/switch_model.sh use <档位>` 切换（写 systemd drop-in、自动探活与回滚）。详见 [docs/setup.md](docs/setup.md) 5.1。
+- 生成缓存：同一 prompt 重复生成命中 `workspace/.cache/`，不再请求模型；`LLM_CACHE=0` 关闭，`meta.json` 的 `cache_hits` 可看命中次数。
+
 预置演示数据（避免现场等生成）：`python scripts/seed_demo.py --count 2`
 单独验证引擎：`python scripts/gen_once.py "做一个番茄钟" --engine mock`
 

@@ -180,6 +180,12 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 
 显式指定时不降级，是为了避免"以为在用真模型、其实在跑模板"。`auto` 下 `/health` 的 `engine` 字段可直接看出实际选择了哪个。
 
+**能力档（`LLM_PROFILE`）**：一个档位 = 一份 `KEY=VALUE` 文件（`LLM_PROFILE_DIR/<档位>.env`，默认目录 `~/.atoms/llm`），里面放 `ENGINE_MODE / LLM_BASE_URL / LLM_MODEL / LLM_API_KEY / LLM_MAX_TOKENS` 等。启动时先读档位再把值注入环境，**已存在的环境变量优先**，便于临时覆盖单项。档位名只回显在 `/health` 的 `profile` 字段，密钥不出进程。
+
+两个引擎共用同一份档位：LLM 引擎直接读注入后的 `LLM_*`；MetaGPT 引擎在初始化时把同样的值写成它认的 `~/.metagpt/config2.yaml`（未配置 `LLM_*` 时不动该文件，首次覆盖前留 `.atoms-bak`）。
+
+**生成缓存（`workspace/.cache/`）**：按 `sha256(schema|namespace|identity|prompt)` 落盘模型返回的**原始文本**，命中即复用、不再发请求；`identity` 含引擎、档位、模型、端点与采样参数，换档位必然不命中。只缓存文本，不缓存产物——抽取、体检、自检与修正逻辑照常执行。`LLM_CACHE=0` 关闭，`LLM_CACHE_MAX_ENTRIES` 控制条数（默认 200，按最近使用淘汰）。缓存不改变任务与版本语义：新建任务仍会新建记录，只是不再等模型。
+
 选择单角色而非 `Team` 全流程：全流程不可控且更慢，Web 场景需要的是"一次可复现的生成"，不是多角色编排本身。多角色观感通过前端阶段卡片呈现。
 
 ### 4.4 产物管理
@@ -360,10 +366,11 @@ S7 起版本链的父节点来源变了：不再由前端点"继续修改"，而
 **可靠性**：
 - 降级：`MOCK_ENGINE=1` 可在 LLM 不可用时保证链路可演示；
 - 重试：任务级手动重试，不做自动重试（避免费用翻倍）；
-- 幂等：同一 `prompt` 不做去重，前端"重试"显式创建新任务。
+- 幂等：同一 `prompt` 不做去重，前端"重试"显式创建新任务；重复生成命中的是**缓存**（见 4.3），不是任务去重。
 
 **安全**：
-- LLM Key 只存在于服务端 `~/.metagpt/config2.yaml`，绝不下发前端；
+- LLM Key 只存在于服务端：档位文件 `~/.atoms/llm/<档位>.env`（或 `/etc/atoms/llm/`）与 `~/.metagpt/config2.yaml`，权限 600，绝不下发前端，也不写进 systemd unit；
+- `/health` 只回显档位名与缓存计数，不回显 Key、端点与档位文件路径；
 - 产物目录访问做路径前缀校验；
 - 预览 iframe 无 `allow-same-origin`，生成代码无法读取主站 Cookie；
 - 不提供任何文件上传与任意路径读取能力。

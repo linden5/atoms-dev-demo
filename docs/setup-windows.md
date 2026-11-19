@@ -104,6 +104,25 @@ llm:
 
 注意：`base_url` 末尾的 `/v1` 不能省略；`api_type` 必须是 `openai`。
 
+#### 5.1 能力档（Windows 上没有 systemd）
+
+开发机不需要 `switch_model.sh`（它依赖 systemd），用同一套档位文件 + 两个环境变量等价实现：
+
+```powershell
+$env:LLM_PROFILE = "cheap"                          # 档位名
+$env:LLM_PROFILE_DIR = "$HOME\.atoms\llm"           # 目录，放 cheap.env
+# cheap.env 里是平铺的 KEY=VALUE：
+#   ENGINE_MODE=llm
+#   LLM_BASE_URL=https://api.deepseek.com/v1
+#   LLM_MODEL=deepseek-chat
+#   LLM_API_KEY=sk-...
+```
+
+- 已存在的 `$env:LLM_*` 优先于档位文件，便于临时覆盖单项
+- 档位文件是密钥，**不要放进仓库**；`C:\Users\<你>\.atoms\` 在仓库外，安全
+- 换档位后要重启服务（不做热加载）
+- 缓存在 `workspace\.cache\`，`$env:LLM_CACHE = "0"` 可关闭；`meta.json` 的 `cache_hits` 看命中次数
+
 ### 6. 验证环境
 
 ```powershell
