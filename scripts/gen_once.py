@@ -36,11 +36,17 @@ SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from app.config import ENGINE_MODE_AUTO, ENGINE_MODE_METAGPT, ENGINE_MODE_MOCK, settings  # noqa: E402
+from app.config import (  # noqa: E402
+    ENGINE_MODE_AUTO,
+    ENGINE_MODE_LLM,
+    ENGINE_MODE_METAGPT,
+    ENGINE_MODE_MOCK,
+    settings,
+)
 from app.engine.base import EmitFn  # noqa: E402
 from app.tasks import scan_artifacts  # noqa: E402
 
-ENGINE_CHOICES = (ENGINE_MODE_AUTO, ENGINE_MODE_MOCK, ENGINE_MODE_METAGPT)
+ENGINE_CHOICES = (ENGINE_MODE_AUTO, ENGINE_MODE_MOCK, ENGINE_MODE_LLM, ENGINE_MODE_METAGPT)
 
 
 class FailingEngine:
@@ -59,15 +65,26 @@ def build_engine(choice: str):
 
         return MockEngine()
 
+    if choice == ENGINE_MODE_LLM:
+        from app.engine.llm_engine import LLMEngine
+
+        return LLMEngine()
+
     from app.engine.metagpt_engine import MetaGPTEngine, metagpt_available
 
     if choice == ENGINE_MODE_METAGPT:
         return MetaGPTEngine()
 
+    if settings.llm_configured:
+        from app.engine.llm_engine import LLMEngine
+
+        print(f"[info] auto：使用 LLM 引擎 {settings.llm_model}", flush=True)
+        return LLMEngine()
+
     available, detail = metagpt_available()
     if available:
         return MetaGPTEngine()
-    print(f"[info] 未检测到 MetaGPT（{detail}），本次使用 MOCK 引擎", flush=True)
+    print(f"[info] 未配置 LLM、也未检测到 MetaGPT（{detail}），本次使用 MOCK 引擎", flush=True)
     from app.engine.mock_engine import MockEngine
 
     return MockEngine()
@@ -87,7 +104,11 @@ async def generate(args: argparse.Namespace) -> int:
             engine = build_engine(args.engine)
         except RuntimeError as exc:  # 例如强制 metagpt 但环境没装：只要一条可读的提示，不要 traceback
             print(f"[失败] {exc}", file=sys.stderr)
-            print("[提示] 去掉 --engine metagpt，或设 MOCK_ENGINE=1 用 MOCK 引擎验证链路", file=sys.stderr)
+            print(
+                "[提示] 去掉 --engine 让它走 auto，或设 ENGINE_MODE=mock 用 MOCK 引擎验证链路；"
+                "用 LLM 引擎时需设置 LLM_BASE_URL / LLM_MODEL / LLM_API_KEY",
+                file=sys.stderr,
+            )
             return 1
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
