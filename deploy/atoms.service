@@ -9,9 +9,14 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/atoms-dev-demo
 Environment=PYTHONUNBUFFERED=1
-; 引擎选择（S4 起）：留空 = auto（装了 MetaGPT 用真实引擎，否则降级 MOCK）
-; 需要固定行为时手动指定：MOCK_ENGINE=1 强制 MOCK，MOCK_ENGINE=0 强制真实引擎
-; Environment=MOCK_ENGINE=1
+; 引擎选择（S8 起）：ENGINE_MODE=llm|mock|metagpt|auto，留空等同 auto
+;   auto = LLM 三项配齐用 LLM → 能导入 MetaGPT 用 MetaGPT → 否则降级 MOCK
+; 旧的 MOCK_ENGINE 三态仍然有效（MOCK_ENGINE=1 强制 MOCK，=0 强制 MetaGPT）
+; Environment=ENGINE_MODE=llm
+; Environment=LLM_BASE_URL=https://api.deepseek.com/v1
+; Environment=LLM_MODEL=deepseek-chat
+; Key 单独放 EnvironmentFile（权限 600），不要写在本文件里
+; EnvironmentFile=/etc/atoms/llm.env
 ExecStart=/home/ubuntu/atoms-dev-demo/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers
 Restart=always
 RestartSec=2
