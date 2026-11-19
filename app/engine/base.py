@@ -19,6 +19,19 @@ EmitFn = Callable[[str], Awaitable[None]]
 class Engine(Protocol):
     name: str
 
-    async def run(self, task_id: str, prompt: str, workdir: Path, emit: EmitFn) -> None:
-        """生成产物到 workdir。抛异常即视为失败，由编排层统一收尾。"""
+    async def run(
+        self,
+        task_id: str,
+        prompt: str,
+        workdir: Path,
+        emit: EmitFn,
+        *,
+        parent_html: str | None = None,
+        requirement: str | None = None,
+    ) -> None:
+        """生成产物到 workdir。抛异常即视为失败，由编排层统一收尾。
+
+        `parent_html` 非空表示迭代修复（父版本产物存在）：LLM 引擎改走
+        REVISION_PROMPT 分支，其他引擎可忽略这两个参数。
+        """
         ...

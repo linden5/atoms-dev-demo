@@ -42,7 +42,9 @@ __BRIEF__
    保存 `fetch(window.__ATOMS__.dataUrl + "?token=" + window.__ATOMS__.token, {method:"PUT",
    headers:{"Content-Type":"application/json"}, body: JSON.stringify(状态对象)})`，
    启动时 `fetch(同地址 + "?token=" + window.__ATOMS__.token)` 后 `response.json()` 读回；
-7. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
+7. 核心逻辑必须正确：输出前用 2-3 个代表性输入（例如计算器算 "2+3"、添加一条记录）在脑中完整走查
+   调用链（事件入口 → 校验 → 计算 → 渲染），确认不会被自己的校验规则误拦、结果符合预期；
+8. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
 """
 
 REVIEW_PROMPT = """你是前端代码审查员。检查下面这个单文件网页应用是否可以交付。
@@ -53,11 +55,15 @@ REVIEW_PROMPT = """你是前端代码审查员。检查下面这个单文件网�
 3. 没有外链资源：script/link/img 的 src 或 href 不含 http(s)://；
 4. 没有占位内容：没有 `[Company Name]`、`Lorem ipsum` 之类；
 5. 移动端：有 viewport meta，窄屏不会横向溢出；
-6. 中文界面，文案通顺。
+6. 中文界面，文案通顺；
+7. 沙箱约束：没有使用 localStorage / sessionStorage / cookie（平台注入的 window.__ATOMS__
+   存储桥除外），界面没有承诺"刷新后保留"（除非用的是 __ATOMS__ 存储桥）；
+8. 功能正确性：找出 1-2 个核心交互函数，用代表性输入逐行模拟执行，验证逻辑正确、
+   输出符合预期、不会被校验规则误拦（例如计算类应用必须验证一个真实算式的完整路径）。
 
 只输出 JSON，不要代码块、不要解释，格式固定为：
-{"ok": true 或 false, "issues": ["问题1", "问题2"]}
-没有问题时 ok 为 true 且 issues 为空数组。
+{"ok": true 或 false, "issues": ["问题1", "问题2"], "verified": ["已走查并验证的交互1", ...]}
+没有问题时 ok 为 true、issues 为空数组，verified 列出你实际验证过的交互。
 
 页面：
 __HTML__
@@ -68,11 +74,47 @@ FIX_PROMPT = """你是资深前端工程师。下面这个单文件网页应用�
 需要修正的问题：
 __ISSUES__
 
-约束不变：单文件、CSS/JS 内联、不引用任何外部资源、中文界面、有真实交互、375px 可用。
+约束不变：单文件、CSS/JS 内联、不引用任何外部资源、中文界面、有真实交互、375px 可用；
+禁止使用 localStorage / sessionStorage / cookie（预览沙箱禁用，数据只存内存或用平台注入的
+window.__ATOMS__ 存储桥）。
 只输出修正后的完整 HTML（从 <!doctype html> 到 </html>），不要解释。
 
 当前页面：
 __HTML__
+"""
+
+REVISION_PROMPT = """你是资深前端工程师。下面是一个已生成的单文件网页应用，用户在使用中
+发现了问题或有修改需求。请在保留原有功能与风格的前提下修改代码。
+
+用户的反馈或新需求：
+__REQUIREMENT__
+
+修改要求：
+1. 先定位根因：涉及"某操作报错/无效"时，找到对应的事件处理与校验逻辑逐行走查，确认修复路径，
+   不要只改表面文案；
+2. 用一个代表性输入验证修复后的完整调用链确实正确；
+3. 除用户要求外不要重构、不要改视觉风格、不要更换实现方式；
+4. 只输出修改后的完整 HTML（从 <!doctype html> 到 </html>），不要解释、不要 Markdown 围栏；
+5. 约束不变：CSS/JS 全内联、不引用任何外部资源、中文界面、375px 可用；
+   禁止使用 localStorage / sessionStorage / cookie（预览沙箱禁用，数据只存内存或用
+   平台注入的 window.__ATOMS__ 存储桥）。
+
+当前页面：
+__HTML__
+"""
+
+
+VERSION_REF_PROMPT = """用户在多轮对话中提到想基于某个历史版本继续修改。根据版本列表和用户的话，
+判断用户指的是哪个版本。按内容理解（比如"能算三角函数的那版"对得上某个版本的需求摘要），
+不要按字面猜数字。
+
+版本列表：
+__VERSIONS__
+
+用户的话：__REQUIREMENT__
+
+只输出 JSON，不要解释：{"version": 编号}，编号必须是版本列表里存在的（1 到 __TOTAL__）；
+用户指的是最新版本或看不出指代时输出 {"version": null}。
 """
 
 

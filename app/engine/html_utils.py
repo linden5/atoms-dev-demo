@@ -22,6 +22,8 @@ _INTERACTIVE = re.compile(r"<(script|style)[\s>]", re.I)
 # 预览 CSP 只放行 'self' / inline / data / blob，外链资源会被浏览器拦掉
 _EXTERNAL_REF = re.compile(r"""<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)\s*=\s*["']https?://""", re.I)
 _PLACEHOLDER = re.compile(r"\[(?:[A-Za-z][A-Za-z /&'-]{2,20})\]|lorem ipsum", re.I)
+# 预览 iframe 是 opaque origin（无 allow-same-origin），访问存储 API 会直接抛 SecurityError
+_STORAGE = re.compile(r"\b(?:localStorage|sessionStorage|document\.cookie)\b")
 
 
 def extract_html(text: str | None) -> str | None:
@@ -65,3 +67,11 @@ def external_refs(html: str) -> list[str]:
 def placeholder_hits(html: str) -> list[str]:
     """找出 `[Company name]` 这类没替换的占位符。"""
     return sorted({m.group(0) for m in _PLACEHOLDER.finditer(html or "")})[:8]
+
+
+def storage_hits(html: str) -> list[str]:
+    """预览沙箱禁用存储；出现即列出位置，供体检与自检修正。
+
+    注意：平台注入的 `window.__ATOMS__` 存储桥不含这些标识符，不会被误伤。
+    """
+    return [m.group(0) for m in _STORAGE.finditer(html or "")][:5]

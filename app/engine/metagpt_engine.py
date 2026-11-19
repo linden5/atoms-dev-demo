@@ -148,7 +148,16 @@ class MetaGPTEngine:
         self.config_path = sync_metagpt_config()
         self.cache_hits = 0
 
-    async def run(self, task_id: str, prompt: str, workdir: Path, emit: EmitFn) -> None:
+    async def run(
+        self,
+        task_id: str,
+        prompt: str,
+        workdir: Path,
+        emit: EmitFn,
+        *,
+        parent_html: str | None = None,
+        requirement: str | None = None,
+    ) -> None:
         workdir.mkdir(parents=True, exist_ok=True)
 
         await emit("planning")

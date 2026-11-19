@@ -33,8 +33,17 @@ from app.engine.html_utils import (
     extract_html,
     inspect_html,
     placeholder_hits,
+    storage_hits,
 )
-from app.engine.prompts import CODE_PROMPT, FIX_PROMPT, PLAN_PROMPT, REVIEW_PROMPT, render
+from app.engine.prompts import (
+    CODE_PROMPT,
+    FIX_PROMPT,
+    PLAN_PROMPT,
+    REVISION_PROMPT,
+    REVIEW_PROMPT,
+    VERSION_REF_PROMPT,
+    render,
+)
 
 log = logging.getLogger("atoms.engine.llm")
 
@@ -79,27 +88,51 @@ class LLMEngine:
 
     # ---------- 对外入口 ----------
 
-    async def run(self, task_id: str, prompt: str, workdir: Path, emit: EmitFn) -> None:
+    async def run(
+        self,
+        task_id: str,
+        prompt: str,
+        workdir: Path,
+        emit: EmitFn,
+        *,
+        parent_html: str | None = None,
+        requirement: str | None = None,
+    ) -> None:
+        """生成产物到 workdir。
+
+        `parent_html` 非空时走 REVISION_PROMPT 分支（迭代修复：旧代码 + 用户反馈 → 改稿），
+        跳过 planning，不再盲重写；`requirement` 是用户本轮原话，缺省退回 `prompt`。
+        """
         workdir.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
 
-        # 1) 规划：出一份用户能看懂的中文简报
-        await emit("planning")
-        brief = await self._step(
-            "planning",
-            PLAN_PROMPT,
-            {"requirement": prompt},
-            max_tokens=900,
-            emit=emit,
-        )
+        if parent_html:
+            # 迭代修复：拿父版本代码当上下文，用户原话当需求；简报留空，标题走需求兜底
+            await emit("检测到父版本产物，基于上一版代码修改，不重新生成")
+            await emit("planning")
+            await emit("coding")
+            brief = ""
+            html, problems = await self._revise(
+                (requirement or prompt).strip(), parent_html, emit
+            )
+        else:
+            # 1) 规划：出一份用户能看懂的中文简报
+            await emit("planning")
+            brief = await self._step(
+                "planning",
+                PLAN_PROMPT,
+                {"requirement": prompt},
+                max_tokens=900,
+                emit=emit,
+            )
 
-        # 2) 编码：出单文件应用，不合格就带着原因重试一次
-        await emit("coding")
-        html, problems = await self._build_html(prompt, brief, emit)
+            # 2) 编码：出单文件应用，不合格就带着原因重试一次
+            await emit("coding")
+            html, problems = await self._build_html(prompt, brief, emit)
 
         # 3) 自检：结构化 review，有问题再修一次（不无限重试，避免演示时越修越慢）
         await emit("checking")
-        issues = await self._review(html, prompt, emit)
+        issues, review_status, verified = await self._review(html, prompt, emit)
         fixed = False
         if issues:
             candidate = await self._fix(html, issues, emit)
@@ -119,6 +152,8 @@ class LLMEngine:
                     "brief": brief.strip(),
                     "chars": len(html),
                     "issues": issues,
+                    "review_status": review_status,
+                    "verified_interactions": verified,
                     "fixed": fixed,
                     "retry_problems": problems,
                     "external_refs": external_refs(html),
@@ -176,39 +211,83 @@ class LLMEngine:
             "可以再试一次，或把需求写得更具体（例如说明要哪些控件）。"
         )
 
-    async def _review(self, html: str, prompt: str, emit: EmitFn) -> list[str]:
-        """返回需要修正的问题列表；解析失败按"没有问题"处理，不阻断交付。
+    async def _revise(self, requirement: str, parent_html: str, emit: EmitFn) -> tuple[str, list[str]]:
+        """迭代修复：旧代码 + 用户反馈 → 改稿。两次都不合格才抛错。
+
+        与 `_build_html` 的差别：不走 PLAN_PROMPT，直接在父版本上改，
+        避免"修复 XX"被当成全新需求盲重写、旧 bug 复现。
+        """
+        problems: list[str] = []
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            extra = ""
+            if problems:
+                extra = "\n\n上一次输出不合格：" + "；".join(problems) + "。请重新输出完整 HTML。"
+                await emit(f"第 {attempt} 次改稿不合格，重试中：{problems[-1]}")
+            text = await self._step(
+                "coding",
+                REVISION_PROMPT,
+                {"requirement": requirement, "html": parent_html},
+                max_tokens=settings.llm_max_tokens,
+                suffix=extra,
+                emit=emit,
+            )
+            html = extract_html(text)
+            ok, why = inspect_html(html)
+            if ok:
+                return html, problems  # type: ignore[return-value]
+            problems.append(why)
+            log.warning("第 %d 次改稿不合格：%s", attempt, why)
+
+        raise RuntimeError(
+            "模型没返回可用的完整页面（" + "；".join(problems) + "）。"
+            "可以再试一次，或把修改要求写得更具体。"
+        )
+
+    async def _review(self, html: str, prompt: str, emit: EmitFn) -> tuple[list[str], str, list[str]]:
+        """返回 `(待修正问题, review_status, 已验证交互)`；审查失败不阻断交付。
 
         温度用 0.01 而不是 0：部分厂商（如智谱的 OpenAI 兼容模式）明确不接受
         `temperature=0`，会返回 400 让自检被静默跳过——那等于审查没跑，问题却看不出来。
+        review_status：ok = 审查跑完；parse_failed = 模型输出不是 JSON（此前完全静默，
+        排障时看不出审查到底跑没跑）；call_failed = 审查调用本身失败。
+        verified 取自模型自报的 verified 字段，落 meta.json 供核对。
         """
         try:
             text = await self._step(
                 "checking",
                 REVIEW_PROMPT,
                 {"html": html},
-                max_tokens=600,
+                max_tokens=800,
                 temperature=REVIEW_TEMPERATURE,
                 emit=emit,
             )
         except RuntimeError as exc:  # 审查本身失败不该让整个任务失败
             log.warning("自检调用失败，跳过：%s", exc)
-            return []
+            return [], "call_failed", []
 
         data = _parse_json_object(text)
         if data is None:
             log.warning("自检输出不是 JSON，跳过修正：%s", (text or "")[:120])
-            return []
-        if data.get("ok") is True:
-            return []
+            return [], "parse_failed", []
 
-        issues = [str(item).strip() for item in (data.get("issues") or []) if str(item).strip()]
-        # 本地体检补两条硬问题：外链会被 CSP 拦，占位符是明显的半成品
+        verified = [str(v).strip() for v in (data.get("verified") or []) if str(v).strip()]
+        # 本地体检的硬问题放前面且不依赖模型自觉：外链会被 CSP 拦，占位符是半成品，
+        # 存储访问在 opaque origin 下必抛 SecurityError（平台注入的 __ATOMS__ 存储桥不受影响）
+        issues: list[str] = []
         if external_refs(html):
             issues.append("引用了外链资源，预览时会被拦掉，请改成内联")
         if placeholder_hits(html):
             issues.append("页面里还有未替换的占位内容")
-        return issues[:ISSUE_LIMIT]
+        if storage_hits(html):
+            issues.append(
+                "使用了 localStorage/sessionStorage，预览沙箱会抛错，"
+                "请删除或改用内存变量（持久化用平台注入的 window.__ATOMS__ 存储桥）"
+            )
+        if data.get("ok") is not True:
+            issues.extend(
+                str(item).strip() for item in (data.get("issues") or []) if str(item).strip()
+            )
+        return issues[:ISSUE_LIMIT], "ok", verified
 
     async def _fix(self, html: str, issues: list[str], emit: EmitFn) -> str:
         """带问题清单重写一次；修完仍不合格就保留原稿（宁可原稿能跑）。"""
@@ -463,3 +542,50 @@ def _fallback_title(prompt: str) -> str:
     """简报没给出目标时，用需求前 24 字兜底。"""
     text = " ".join((prompt or "").split())
     return text[:24] or "生成应用"
+
+
+# ---------- 版本引用的 LLM 兜底（S10 P2） ----------
+
+_version_ref_engine: LLMEngine | None = None
+
+
+async def resolve_version_by_llm(requirement: str, versions: list[Any]) -> int | None:
+    """语义指代的版本解析兜底："能算三角函数那版" → v2。
+
+    输入是版本摘要（title + 需求前 40 字，编号与 /versions 的 v1…vN 一致），
+    输出约束为 {"version": n|null}，编号越界或解析失败一律返回 None，
+    调用方回退"最新版"，绝不因这个兜底失败而阻断生成。
+    用独立的引擎实例：解析用的 steps/usage 不能混进生成任务的 meta。
+    """
+    global _version_ref_engine
+    available, _ = llm_available()
+    if not available or not versions:
+        return None
+    if _version_ref_engine is None:
+        _version_ref_engine = LLMEngine()
+
+    lines = [
+        f"v{index}: {getattr(task, 'version_title', None) or '未命名'}｜"
+        f"需求：{' '.join((getattr(task, 'prompt', '') or '').split())[:40]}"
+        for index, task in enumerate(versions, start=1)
+    ]
+    try:
+        text = await _version_ref_engine._step(
+            "version_ref",
+            VERSION_REF_PROMPT,
+            {"versions": "\n".join(lines), "requirement": requirement, "total": str(len(versions))},
+            max_tokens=200,
+            temperature=REVIEW_TEMPERATURE,
+        )
+    except Exception as exc:  # noqa: BLE001  兜底失败不阻断
+        log.warning("版本引用 LLM 解析失败，回退最新版：%s", exc)
+        return None
+
+    data = _parse_json_object(text)
+    if not data:
+        log.warning("版本引用 LLM 输出不是 JSON，回退最新版：%s", (text or "")[:120])
+        return None
+    number = data.get("version")
+    if not isinstance(number, int) or not 1 <= number <= len(versions):
+        return None  # null / 幻构编号 / 越界 → 最新版
+    return number
