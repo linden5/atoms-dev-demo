@@ -59,29 +59,55 @@ TARGET=public FULL=1 bash scripts/verify_s8.sh   # 公网（在外部机器执�
 ```
 
 每个 `verify_sN.sh` 都是 curl + grep，退出码 0 即通过，可重复执行；公网地址在 `deploy/verify.env`（模板见 `.example`）。
-日常启动+校验合并成一条：`bash scripts/restart_and_verify.sh <档位> --full`（`--full` 追加最新 `verify_sN.sh` 全量验收）。
+日常启动+校验合并成一条命令（`restart_and_verify.sh`，参数与流程详见「部署」一节）。
 
 ## 部署
 
-一键部署，服务器上各一条命令，分支 / 端口 / 服务 / 模型档位全部写死：
+### 一键部署（推荐）
+
+服务器上各一条命令，分支 / 端口 / 服务 / 模型档位全部写死：
 
 ```bash
 bash scripts/deploy_accept.sh    # 验收：main 分支 / 8000 端口 / atoms 服务 / strong 档
 bash scripts/deploy_dev.sh       # 自测：dev 分支 / 8001 端口 / atoms-dev 服务 / dev 档
 ```
 
-流程：拉代码 → 同步依赖 → 切档 → 健康检查 → 模型连通冒烟，任一步失败自动回滚档位；systemd 里还没有服务时会自动先安装。首次启用自测环境：`git clone -b dev <仓库地址> ~/atoms-dev-demo-dev`。
+首次启用自测环境：`git clone -b dev <仓库地址> ~/atoms-dev-demo-dev`。
 
 | 脚本 | 环境 | 分支 | 目录 | 端口 | systemd 服务 | 档位 |
 |---|---|---|---|---|---|---|
 | `deploy_accept.sh` | 验收 | `main` | `~/atoms-dev-demo` | 8000 | `atoms` | `strong` |
 | `deploy_dev.sh` | 自测 | `dev` | `~/atoms-dev-demo-dev` | 8001 | `atoms-dev` | `dev` |
 
-两套环境目录 / 端口 / 服务 / SQLite 数据各自独立，互不影响。可选参数（透传给 `restart_and_verify.sh`）：`--full` 追加全量验收、`--no-smoke` 跳过模型冒烟、`--no-deploy` 只切档不拉代码。
+两套环境目录 / 端口 / 服务 / SQLite 数据各自独立，互不影响。这两个脚本只是 `restart_and_verify.sh` 的固定参数封装（见下一节），支持的参数完全一样：`--full` / `--no-smoke` / `--no-deploy`。
 
 线上检查：`curl -s localhost:8000/health`（验收，应看到 `step=s8 engine=llm`）、`journalctl -u atoms -f`；自测实例把端口换成 8001、服务名换成 `atoms-dev`。
-等价的底层写法（一键脚本就是这么封装的）：`INSTANCE=dev bash scripts/deploy.sh` + `SERVICE=atoms-dev BASE_URL=http://127.0.0.1:8001 bash scripts/switch_model.sh use dev`；验证自测环境：`BASE_URL=http://127.0.0.1:8001 bash scripts/verify_s8.sh`。
 固定形态：验收 `0.0.0.0:8000`、自测 `0.0.0.0:8001`，不使用域名与 80/443；安全组需放行 `8000,8001/TCP`。
+
+### restart_and_verify.sh：启动 + 校验的核心流程
+
+一键脚本和手动调用走的是同一个入口，流程为：拉代码 → 同步依赖 → 切档 → 健康检查 → 模型连通冒烟；任一步失败自动回滚档位，systemd 里还没有服务时自动先安装。
+
+```bash
+bash scripts/restart_and_verify.sh <档位>          # 档位必须显式指定（dev / strong …），启动前打印该档位用的模型
+bash scripts/restart_and_verify.sh strong --full   # 追加最新 verify_sN.sh 全量验收
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--full` | 追加最新步骤的 `verify_sN.sh` 全量验收 |
+| `--no-smoke` | 跳过模型连通冒烟（不产生真实调用） |
+| `--no-deploy` | 跳过 `deploy.sh`（只切档不拉代码，服务未装时也不会自动安装） |
+
+冒烟会向厂商发一次 `max_tokens=64` 的真实请求（费用可忽略），专门提前暴露 401 / 404 / 思考吃光输出预算这三类「服务起来了但模型用不了」的问题。
+可覆盖的环境变量：`PROFILE_DIR / SERVICE / BASE_URL / DROPIN_DIR`（一键脚本就是把其中几个写死后转调本脚本）。
+本地 Windows 没有 systemctl，直接 `LLM_PROFILE=<档位> python -m uvicorn app.main:app --port 8000`。
+
+### 底层工具（一键脚本等价于下面的组合）
+
+- `INSTANCE=dev bash scripts/deploy.sh`：拉分支 → 同步依赖 → 渲染 systemd unit → 重启 → 探活（实例预设见脚本头部注释）。
+- `SERVICE=atoms-dev BASE_URL=http://127.0.0.1:8001 bash scripts/switch_model.sh use dev`：只切档，写 systemd drop-in，探活失败自动回滚。
+- 验证自测环境：`BASE_URL=http://127.0.0.1:8001 bash scripts/verify_s8.sh`。
 
 ## 回滚
 
