@@ -205,6 +205,10 @@ auto/空  → LLM 三项配齐用 LLM；否则能导入 metagpt 用 MetaGPT；�
 - 安全：
   - `/files/{path}` 必须 `Path.resolve()` 后校验前缀仍在任务目录内，阻断路径穿越；
   - 预览响应带 CSP：`default-src 'self' 'unsafe-inline' data: blob:`，禁止生成物外联任意脚本；
+    **刻意不放行 `unsafe-eval`**（S10 验证发现：模型生成的计算器普遍用 `Function('...')` 动态
+    求值，在沙箱里被 CSP 拦、异常被吞后表现为"所有输入都报无效"，用户怎么提示都修不好）。
+    解法在生成端：CODE/REVIEW/REVISION/FIX 提示词禁 eval / new Function，本地硬体检
+    （`html_utils.eval_hits`）发现即进修正循环，meta.json 落 `evals` 字段；
   - iframe 使用 `sandbox="allow-scripts allow-forms allow-modals allow-downloads
     allow-orientation-lock"`，**不加** `allow-same-origin`，隔离生成代码与主站。
     S10 修正：`allow-autoplay` 不是合法 sandbox 旗标（autoplay 归 Permissions Policy 管，
