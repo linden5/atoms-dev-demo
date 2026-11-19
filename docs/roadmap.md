@@ -173,7 +173,7 @@ python scripts/serve_fake_metagpt.py --scenario no_html --port 8011  # 失败态
 | S4 | ✅ | ✅ 15/15 | ✅ [s4.md](steps/s4.md) | ◐ 本地 curl + 浏览器通过（auto 降级 MOCK）；真实 MetaGPT 生成待服务器验证 | ✅ `s4` |
 | S5 | ✅ | ✅ 22/22 | ✅ [s5.md](steps/s5.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；服务器部署待人工确认 | ✅ `s5` |
 | S6 | ✅ | ✅ 23/23（FULL 模式串跑 s1–s5） | ✅ [s6.md](steps/s6.md) | ◐ 本地 curl + 浏览器通过；公网部署与真实引擎待服务器验证 | ✅ `s6` / `v1.0` |
-| S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ⬜ 未打 tag |
+| S7 | ✅ | ✅ 18/18（s1–s6 全部回归通过） | ✅ [s7.md](steps/s7.md) | ◐ 本地 curl + 真实浏览器（playwright-cli）通过；多轮上下文用假 metagpt 验证，真机待服务器 | ✅ `s7` |
 
 每完成一格就更新本表，避免"看起来做完了"与"实际能演示"之间的偏差。
 
