@@ -164,16 +164,21 @@ def clear() -> int:
     return removed
 
 
-def summary() -> dict[str, Any]:
-    """/health 用：只报状态与计数，不暴露目录与键。"""
+def summary(*, active: bool | None = None) -> dict[str, Any]:
+    """/health 用：只报状态与计数，不暴露目录与键。
+
+    `active=False` 表示当前引擎根本不会调模型（MOCK），此时如实回 `enabled=false`，
+    免得把"没命中过"误读成"缓存失效"。
+    """
+    enabled = settings.llm_cache if active is None else (settings.llm_cache and active)
     entries = 0
-    if settings.llm_cache:
+    if enabled:
         try:
             entries = len(list(settings.cache_dir.glob("*.json")))
         except OSError:
             entries = 0
     return {
-        "enabled": settings.llm_cache,
+        "enabled": enabled,
         "entries": entries,
         "hit": _stats["hit"],
         "miss": _stats["miss"],

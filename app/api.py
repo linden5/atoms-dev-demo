@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app import STEP, db, llm_cache, models, tasks, __version__
-from app.config import ENGINE_MODE_LLM, settings
+from app.config import ENGINE_MODE_LLM, ENGINE_MODE_MOCK, settings
 
 router = APIRouter()
 
@@ -64,7 +64,8 @@ async def health() -> dict:
         # 能力档只报名字，档位文件路径与其中的密钥一律不下发
         "profile": settings.llm_profile,
         "engine_mode": settings.engine_mode,
-        "cache": llm_cache.summary(),
+        # MOCK 不调模型，缓存不会被用到；如实报 enabled=false，避免误以为命中过
+        "cache": llm_cache.summary(active=engine != ENGINE_MODE_MOCK and not settings.mock_engine),
         "uptime_s": round(time.monotonic() - _STARTED_AT, 3),
         "python": platform.python_version(),
         "time": _now(),
