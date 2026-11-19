@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+import secrets
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -98,6 +100,19 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id)",
+    # ---- 发布（S8）：把一个版本公开到 /p/{slug}，同样只新增表 ----
+    """
+    CREATE TABLE IF NOT EXISTS publishes (
+      slug       TEXT PRIMARY KEY,
+      task_id    TEXT NOT NULL,
+      session_id TEXT,
+      title      TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_publishes_task ON publishes(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_publishes_session ON publishes(session_id)",
 )
 
 
@@ -125,6 +140,7 @@ class Task:
     parent_id: str | None = None
     stage: str | None = None
     error: str | None = None
+    version_title: str | None = None
     artifacts: list[Artifact] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -140,6 +156,7 @@ class Task:
             parent_id=row["parent_id"],
             stage=row["stage"],
             error=row["error"],
+            version_title=row["version_title"] if "version_title" in row.keys() else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,6 +167,7 @@ class Task:
             "stage": self.stage,
             "parent_id": self.parent_id,
             "error": self.error,
+            "version_title": self.version_title,
             "artifacts": [a.to_dict() for a in self.artifacts],
             "events": self.events,
             "created_at": self.created_at,
@@ -169,6 +187,7 @@ class Task:
             "stage": self.stage,
             "parent_id": self.parent_id,
             "error": self.error,
+            "version_title": self.version_title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "artifact_count": len(self.artifacts),
@@ -244,6 +263,61 @@ class Session:
             "updated_at": self.updated_at,
             "message_count": self.message_count,
             "last_task_id": self.last_task_id,
+        }
+
+
+# ---------- 发布 ----------
+
+# 公开地址：小写字母/数字/连字符，6–30 位，首尾不能是连字符（与 Atoms 的改名规则一致）
+SLUG_MIN_LEN = 6
+SLUG_MAX_LEN = 30
+SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{%d,%d})[a-z0-9]$" % (SLUG_MIN_LEN - 2, SLUG_MAX_LEN - 2))
+PUBLISH_PATH_PREFIX = "/p"
+
+
+def normalize_slug(text: str) -> str:
+    """只做小写与去空格；合法性交给 `valid_slug`，避免静默改写用户输入。"""
+    return (text or "").strip().lower()
+
+
+def valid_slug(slug: str) -> bool:
+    return bool(SLUG_PATTERN.match(slug or ""))
+
+
+def suggest_slug() -> str:
+    """建议地址：中文标题无法可靠音译，直接用 app- + 随机串，用户可改。"""
+    return f"app-{secrets.token_hex(3)}"
+
+
+@dataclass
+class Publish:
+    slug: str
+    task_id: str
+    session_id: str | None
+    title: str
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Publish":
+        return cls(
+            slug=row["slug"],
+            task_id=row["task_id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "slug": self.slug,
+            "task_id": self.task_id,
+            "session_id": self.session_id,
+            "title": self.title,
+            "url": f"{PUBLISH_PATH_PREFIX}/{self.slug}",
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
 

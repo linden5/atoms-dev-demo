@@ -61,6 +61,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "parent_id" not in columns:
         conn.execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT")
+    # S8：版本名（前端版本卡片显示"版本 2：绿色主题"而不是只有 v2）
+    if "version_title" not in columns:
+        conn.execute("ALTER TABLE tasks ADD COLUMN version_title TEXT")
 
 
 # ---------- 任务 ----------
@@ -151,6 +154,16 @@ def set_stage(task_id: str, stage: str) -> None:
         conn.execute(
             "UPDATE tasks SET stage = ?, updated_at = ? WHERE id = ? AND status = ?",
             (stage, now(), task_id, models.STATUS_RUNNING),
+        )
+
+
+def set_version_title(task_id: str, title: str) -> None:
+    """写版本名（"版本 2：绿色主题"里的冒号后半段），失败不影响任务结果。"""
+    conn = connect()
+    with conn:
+        conn.execute(
+            "UPDATE tasks SET version_title = ?, updated_at = ? WHERE id = ?",
+            (title[:40], now(), task_id),
         )
 
 
@@ -398,13 +411,96 @@ def list_messages(session_id: str, limit: int = 200) -> list[models.Message]:
 
 
 def last_generated_task(session_id: str) -> str | None:
-    """会话里最近一次成功产出的任务，作为"继续修改"的父版本。"""
+    """会话里最近一次成功产出的任务，作为"继续修改"的父版本。
+
+    S8 修正：必须连 tasks 过滤 status，否则上一轮生成失败时，下一次修改会把
+    失败版本当成父版本（preview 为空、版本链断在坏节点上）。
+    """
     row = connect().execute(
         """
-        SELECT task_id FROM messages
-         WHERE session_id = ? AND kind = ? AND task_id IS NOT NULL
-         ORDER BY id DESC LIMIT 1
+        SELECT m.task_id FROM messages m
+          JOIN tasks t ON t.id = m.task_id
+         WHERE m.session_id = ? AND m.kind = ? AND m.task_id IS NOT NULL
+           AND t.status = ?
+         ORDER BY m.id DESC LIMIT 1
         """,
-        (session_id, "artifact"),
+        (session_id, "artifact", models.STATUS_SUCCEEDED),
     ).fetchone()
     return row["task_id"] if row else None
+
+
+def session_of_task(task_id: str) -> str | None:
+    """反查任务属于哪个会话；发布功能用它判断"同一个应用的迭代"。"""
+    row = connect().execute(
+        "SELECT session_id FROM messages WHERE task_id = ? LIMIT 1", (task_id,)
+    ).fetchone()
+    return row["session_id"] if row else None
+
+
+# ---------- 发布 ----------
+
+
+def create_publish(publish: models.Publish) -> None:
+    """插入公开地址；slug 冲突会抛 sqlite3.IntegrityError，由接口层转成 409。"""
+    conn = connect()
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO publishes (slug, task_id, session_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                publish.slug,
+                publish.task_id,
+                publish.session_id,
+                publish.title,
+                publish.created_at,
+                publish.updated_at,
+            ),
+        )
+
+
+def get_publish(slug: str) -> models.Publish | None:
+    row = connect().execute("SELECT * FROM publishes WHERE slug = ?", (slug,)).fetchone()
+    return models.Publish.from_row(row) if row else None
+
+
+def get_publish_by_task(task_id: str) -> models.Publish | None:
+    row = connect().execute(
+        "SELECT * FROM publishes WHERE task_id = ? ORDER BY updated_at DESC LIMIT 1", (task_id,)
+    ).fetchone()
+    return models.Publish.from_row(row) if row else None
+
+
+def get_publish_by_session(session_id: str) -> models.Publish | None:
+    """一个会话（= 一个应用）只取最近更新的那条公开地址。"""
+    row = connect().execute(
+        "SELECT * FROM publishes WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return models.Publish.from_row(row) if row else None
+
+
+def list_publishes(limit: int = 50) -> list[models.Publish]:
+    rows = connect().execute(
+        "SELECT * FROM publishes ORDER BY updated_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [models.Publish.from_row(row) for row in rows]
+
+
+def update_publish_target(slug: str, task_id: str, title: str) -> bool:
+    """把公开地址指向新版本（Atoms 的 Update 语义），返回是否命中。"""
+    conn = connect()
+    with conn:
+        cursor = conn.execute(
+            "UPDATE publishes SET task_id = ?, title = ?, updated_at = ? WHERE slug = ?",
+            (task_id, title, now(), slug),
+        )
+    return cursor.rowcount > 0
+
+
+def delete_publish(slug: str) -> bool:
+    conn = connect()
+    with conn:
+        cursor = conn.execute("DELETE FROM publishes WHERE slug = ?", (slug,))
+    return cursor.rowcount > 0
