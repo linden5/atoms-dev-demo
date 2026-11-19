@@ -30,8 +30,11 @@ SITE_CSP = (
     "object-src 'none'"
 )
 
-# 预览与接口文档不套主站 CSP：前者有专门的宽松策略，后者需要 CDN
-CSP_EXEMPT_PREFIXES = ("/api/tasks/", "/api/docs")
+# 预览、已发布应用与接口文档不套主站 CSP：
+# - 预览 / 公开页有专门的宽松策略（生成代码需要内联脚本）；
+# - `/api/docs` 需要 CDN。
+# `/p/` 还必须允许被外部站点 iframe 嵌入，所以不能带 X-Frame-Options: DENY。
+CSP_EXEMPT_PREFIXES = ("/api/tasks/", "/api/docs", "/p/")
 
 
 def install(app: FastAPI) -> None:

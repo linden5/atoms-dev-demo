@@ -6,18 +6,21 @@
 
 from __future__ import annotations
 
+import io
 import platform
+import sqlite3
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app import STEP, db, tasks, __version__
-from app.config import settings
+from app import STEP, db, models, tasks, __version__
+from app.config import ENGINE_MODE_LLM, settings
 
 router = APIRouter()
 
@@ -50,11 +53,14 @@ async def health() -> dict:
 
     同时注册 HEAD，方便运维用 `curl -I http://host:8000/health` 只取状态码与响应头。
     """
+    engine = tasks.engine_name()
     return {
         "status": "ok",
         "version": __version__,
         "step": STEP,
-        "engine": tasks.engine_name(),
+        "engine": engine,
+        # 只回显模型名，不回显 Key 与端点地址
+        "model": settings.llm_model if engine == ENGINE_MODE_LLM else "",
         "engine_mode": settings.engine_mode,
         "uptime_s": round(time.monotonic() - _STARTED_AT, 3),
         "python": platform.python_version(),
@@ -276,6 +282,187 @@ async def artifact_file(task_id: str, relative: str) -> FileResponse:
 
     headers = {"Cache-Control": "no-store"}
     # 预览 HTML 走同一个 CSP；其它静态资源不需要
+    if path.suffix.lower() in {".html", ".htm"}:
+        headers["Content-Security-Policy"] = PREVIEW_CSP
+    return FileResponse(path, headers=headers)
+
+
+# ---------- 发布 / 分享 ----------
+#
+# 语义（对齐 docs/sprint-s8.md 与 Atoms 的 Publish 面板）：
+# - Preview 是工作副本，`/p/{slug}` 才是"访客能打开的线上版本"；
+# - 同一个会话视为同一个应用，重复发布会把地址指向新版本（Update 语义）；
+# - 地址全局唯一，被别的应用占用时返回 409，不静默改用户的地址。
+
+PUBLIC_HEADERS = {
+    "Content-Security-Policy": PREVIEW_CSP,
+    "Cache-Control": "no-store",
+    "X-Robots-Tag": "noindex",
+}
+
+
+class PublishRequest(BaseModel):
+    slug: str = Field(default="", max_length=40)
+    title: str = Field(default="", max_length=120)
+
+
+def _publish_payload(publish: models.Publish, *, updated: bool) -> dict:
+    data = publish.to_dict()
+    data.update({"created": not updated, "updated": updated})
+    return data
+
+
+@router.post("/api/tasks/{task_id}/publish", tags=["publish"], summary="发布或更新公开链接")
+async def publish_task(task_id: str, body: PublishRequest | None = None) -> JSONResponse:
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.status != models.STATUS_SUCCEEDED:
+        raise HTTPException(status_code=409, detail="只有已完成的版本才能发布")
+    if tasks.entry_of(task.artifacts) is None:
+        raise HTTPException(status_code=409, detail="该版本没有可预览的 HTML")
+
+    slug = models.normalize_slug((body.slug if body else "") or "")
+    if not slug:
+        slug = models.suggest_slug()
+    elif not models.valid_slug(slug):
+        raise HTTPException(
+            status_code=400,
+            detail="地址只能用小写字母、数字和连字符，长度 6–30，且不能以连字符开头或结尾",
+        )
+
+    session_id = db.session_of_task(task.id)
+    title = (body.title if body else "").strip() or task.prompt[:60]
+    existing = db.get_publish(slug)
+
+    if existing is not None:
+        if existing.task_id == task.id:
+            return JSONResponse(_publish_payload(existing, updated=False), status_code=200)
+        same_app = bool(existing.session_id) and existing.session_id == session_id
+        if not same_app:
+            raise HTTPException(status_code=409, detail="这个地址已被其他应用占用，请换一个")
+        db.update_publish_target(slug, task.id, title)
+        refreshed = db.get_publish(slug) or existing
+        return JSONResponse(_publish_payload(refreshed, updated=True), status_code=200)
+
+    stamp = db.now()
+    publish = models.Publish(
+        slug=slug,
+        task_id=task.id,
+        session_id=session_id,
+        title=title,
+        created_at=stamp,
+        updated_at=stamp,
+    )
+    try:
+        db.create_publish(publish)
+    except sqlite3.IntegrityError:  # 并发下同 slug：当作冲突处理，不 500
+        raise HTTPException(status_code=409, detail="这个地址刚被占用，请换一个") from None
+    return JSONResponse(_publish_payload(publish, updated=False), status_code=201)
+
+
+@router.get("/api/tasks/{task_id}/publish", tags=["publish"], summary="该版本所在应用的公开地址")
+async def publish_of_task(task_id: str) -> dict:
+    if db.get_task(task_id) is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    session_id = db.session_of_task(task_id)
+    publish = (
+        db.get_publish_by_session(session_id) if session_id else db.get_publish_by_task(task_id)
+    )
+    return {"publish": publish.to_dict() if publish else None}
+
+
+@router.get("/api/publishes", tags=["publish"], summary="已发布的公开链接列表")
+async def list_publishes(limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    items = [p.to_dict() for p in db.list_publishes(limit=limit)]
+    return {"total": len(items), "publishes": items}
+
+
+@router.delete("/api/publishes/{slug}", tags=["publish"], summary="取消发布（Unpublish）")
+async def unpublish(slug: str) -> dict:
+    if not db.delete_publish(models.normalize_slug(slug)):
+        raise HTTPException(status_code=404, detail="publish not found")
+    return {"slug": slug, "deleted": True}
+
+
+@router.get("/api/tasks/{task_id}/zip", tags=["artifacts"], summary="导出产物 ZIP")
+async def export_zip(task_id: str) -> Response:
+    """Export 入口：整包下载产物，用于"离开平台也能跑"。"""
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not task.artifacts:
+        raise HTTPException(status_code=404, detail="no artifact")
+
+    total = sum(artifact.size for artifact in task.artifacts)
+    if total > settings.max_artifact_bytes:
+        raise HTTPException(status_code=413, detail="产物过大，暂不支持打包下载")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for artifact in task.artifacts:
+            path = tasks.resolve_artifact(task_id, artifact.path)
+            if path is not None:
+                archive.write(path, artifact.path)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{task_id}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+_PUBLIC_404 = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>页面不存在</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f14;
+color:#e6edf3;font-family:system-ui,"PingFang SC",sans-serif;text-align:center}
+a{color:#22d3ee}</style></head><body><main><h1>这个地址还没有发布内容</h1>
+<p>可能是链接写错了，或者作者已经取消发布。</p><p><a href="/">回到 Atoms Demo</a></p>
+</main></body></html>"""
+
+
+def _public_404() -> HTMLResponse:
+    return HTMLResponse(_PUBLIC_404, status_code=404, headers={"Cache-Control": "no-store"})
+
+
+def _published_task(slug: str) -> models.Task:
+    publish = db.get_publish(models.normalize_slug(slug))
+    if publish is None:
+        raise HTTPException(status_code=404, detail="not found")
+    task = db.get_task(publish.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return task
+
+
+@router.get("/p/{slug}", summary="已发布应用的入口页")
+@router.head("/p/{slug}", include_in_schema=False)
+async def public_app(slug: str) -> Response:
+    try:
+        task = _published_task(slug)
+        entry = tasks.entry_of(task.artifacts)
+        path = tasks.resolve_artifact(task.id, entry) if entry else None
+    except HTTPException:
+        return _public_404()
+    if path is None:
+        return _public_404()
+    return FileResponse(path, media_type=HTML_MEDIA_TYPE, headers=PUBLIC_HEADERS)
+
+
+@router.get("/p/{slug}/files/{relative:path}", summary="已发布应用的静态资源")
+@router.head("/p/{slug}/files/{relative:path}", include_in_schema=False)
+async def public_asset(slug: str, relative: str) -> Response:
+    try:
+        task = _published_task(slug)
+    except HTTPException:
+        return _public_404()
+    path = tasks.resolve_artifact(task.id, relative)
+    if path is None:
+        raise HTTPException(status_code=404, detail="not found")
+    headers = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
     if path.suffix.lower() in {".html", ".htm"}:
         headers["Content-Security-Policy"] = PREVIEW_CSP
     return FileResponse(path, headers=headers)
