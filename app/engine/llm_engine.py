@@ -142,7 +142,9 @@ class LLMEngine:
             fixed = candidate != html
             html = candidate
 
-        title = _title_from_plan(brief) or _fallback_title(prompt)
+        # 版本名兜底用用户本轮原话：prompt 在多轮场景是拼了历史的 engine_prompt，
+        # 前 24 字会是"下面是用户与你的对话记录……"，落到版本卡片上没法看
+        title = _title_from_plan(brief) or _fallback_title(requirement or prompt)
         (workdir / "index.html").write_text(html, encoding="utf-8")
         (workdir / "meta.json").write_text(
             json.dumps(
