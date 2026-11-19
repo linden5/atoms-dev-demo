@@ -114,6 +114,8 @@ export LLM_PROFILE_DIR="$HOME/.atoms/llm"
 # 之后启动服务即可；已存在的 LLM_* 变量优先级高于档位文件
 ```
 
+档位文件里可以写任意 `LLM_*` 变量，常用的几个：`LLM_MAX_TOKENS`（输出上限）、`LLM_TIMEOUT`（单次超时）、`LLM_TEMPERATURE`、`LLM_REASONING_EFFORT`。最后这个值得单独说：一部分推理模型无法关闭思考，默认强度会把 `max_tokens` 全花在思考上、`content` 返回空字符串；这种模型建议在档位里加 `LLM_REASONING_EFFORT=low`。踩到时引擎会直接报「模型把输出预算都用在思考上（reasoning_tokens=…）」，不会伪装成「输出过短」。
+
 两个容易踩的点：
 
 - **档位文件里不要写 `ENGINE_MODE`**。`switch_model.sh init` 生成的模板里这一行是注释掉的，原因写在那里：systemd 先应用 unit 的 `Environment=`、再应用 drop-in 的 `EnvironmentFile=`，档位里的 `ENGINE_MODE=llm` 会把 unit 里用来降级的 `ENGINE_MODE=mock` 顶掉。引擎模式归 unit 管，档位只管模型参数。
