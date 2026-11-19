@@ -37,7 +37,12 @@ __BRIEF__
 3. 不引用任何外部资源（CDN、外链字体、外链图片、外链脚本），需要图标用内联 SVG；
 4. 界面中文，`<meta name="viewport" content="width=device-width, initial-scale=1">` 必须有，375px 宽度下仍可用；
 5. 必须有真实可用的交互（增删改、筛选、计算、切换状态等），数据用 JS 变量维护，不依赖网络与后端；
-6. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
+6. 预览运行在禁用存储的沙箱里：禁止使用 localStorage、sessionStorage、document.cookie（访问会直接抛错）；
+   如需"刷新后数据保留"，平台已在页面注入 `window.__ATOMS__`（含 dataUrl 与 token），用它持久化：
+   保存 `fetch(window.__ATOMS__.dataUrl + "?token=" + window.__ATOMS__.token, {method:"PUT",
+   headers:{"Content-Type":"application/json"}, body: JSON.stringify(状态对象)})`，
+   启动时 `fetch(同地址 + "?token=" + window.__ATOMS__.token)` 后 `response.json()` 读回；
+7. 不允许出现 `[Company name]`、`Lorem ipsum` 这类占位内容。
 """
 
 REVIEW_PROMPT = """你是前端代码审查员。检查下面这个单文件网页应用是否可以交付。
