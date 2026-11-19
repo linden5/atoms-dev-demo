@@ -113,6 +113,16 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_publishes_task ON publishes(task_id)",
     "CREATE INDEX IF NOT EXISTS idx_publishes_session ON publishes(session_id)",
+    # ---- 应用存储（S9）：预览沙箱禁用 localStorage，生成应用的数据改由平台代管 ----
+    # 行按版本链根任务归档（root_of），迭代新版本共享同一份数据
+    """
+    CREATE TABLE IF NOT EXISTS task_data (
+      task_id    TEXT PRIMARY KEY,
+      token      TEXT NOT NULL,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    )
+    """,
 )
 
 

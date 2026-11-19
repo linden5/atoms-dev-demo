@@ -172,6 +172,7 @@ def delete_task(task_id: str) -> None:
     with conn:
         conn.execute("DELETE FROM artifacts WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM task_data WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
 
@@ -260,6 +261,69 @@ def list_versions(root_id: str, limit: int = 200) -> list[models.Task]:
     versions = [tasks[task_id] for task_id in order if task_id in tasks]
     versions.sort(key=lambda t: (t.created_at, t.id))
     return versions
+
+
+# ---------- 应用存储（S9） ----------
+#
+# 预览 iframe 是 opaque origin（sandbox 无 allow-same-origin），localStorage 访问会抛
+# SecurityError，生成应用的数据改由平台代管（表 task_data）。
+# 存储按版本链根任务归档：同一应用迭代出的新版本共享同一份数据，与发布的
+# Update 语义（地址指向新版本）对齐。
+
+
+def ensure_task_data(task_id: str) -> str:
+    """确保任务（实际是其版本链根任务）有应用存储行，返回访问 token。
+
+    懒创建：历史任务没有行也能在首次预览/访问时补上，老数据不受影响。
+    """
+    root_id = root_of(task_id)
+    conn = connect()
+    with conn:
+        row = conn.execute(
+            "SELECT token FROM task_data WHERE task_id = ?", (root_id,)
+        ).fetchone()
+        if row is not None:
+            return str(row["token"])
+        token = secrets.token_hex(16)
+        conn.execute(
+            "INSERT OR IGNORE INTO task_data (task_id, token, data, updated_at) VALUES (?, ?, '{}', ?)",
+            (root_id, token, now()),
+        )
+        row = conn.execute(
+            "SELECT token FROM task_data WHERE task_id = ?", (root_id,)
+        ).fetchone()
+    return str(row["token"])
+
+
+def data_token_matches(task_id: str, token: str) -> bool:
+    """校验访问令牌；opaque origin 不带 cookie，令牌只能放在 URL 上。"""
+    root_id = root_of(task_id)
+    row = connect().execute(
+        "SELECT token FROM task_data WHERE task_id = ?", (root_id,)
+    ).fetchone()
+    if row is None or not token:
+        return False
+    return secrets.compare_digest(str(row["token"]), token)
+
+
+def get_task_data_raw(task_id: str) -> str | None:
+    root_id = root_of(task_id)
+    row = connect().execute(
+        "SELECT data FROM task_data WHERE task_id = ?", (root_id,)
+    ).fetchone()
+    return row["data"] if row else None
+
+
+def set_task_data_raw(task_id: str, text: str) -> None:
+    """整包覆盖写入；行不存在时先补建（token 随之生成）。"""
+    token = ensure_task_data(task_id)
+    root_id = root_of(task_id)
+    conn = connect()
+    with conn:
+        conn.execute(
+            "UPDATE task_data SET data = ?, updated_at = ? WHERE task_id = ? AND token = ?",
+            (text, now(), root_id, token),
+        )
 
 
 # ---------- 事件 ----------
