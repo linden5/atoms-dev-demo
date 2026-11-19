@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 
@@ -270,3 +271,140 @@ def list_events(task_id: str) -> list[dict]:
         (task_id,),
     ).fetchall()
     return [{"seq": row["seq"], "message": row["message"], "created_at": row["created_at"]} for row in rows]
+
+
+# ---------- 会话与消息 ----------
+
+
+def new_session_id() -> str:
+    return "s_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(2)
+
+
+def create_session(title: str = "") -> models.Session:
+    conn = connect()
+    stamp = now()
+    session_id = new_session_id()
+    with conn:
+        conn.execute(
+            "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (session_id, title.strip()[:60], stamp, stamp),
+        )
+    return models.Session(id=session_id, title=title.strip()[:60], created_at=stamp, updated_at=stamp)
+
+
+def get_session(session_id: str) -> models.Session | None:
+    conn = connect()
+    row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if row is None:
+        return None
+    session = models.Session.from_row(row)
+    session.message_count = int(
+        conn.execute(
+            "SELECT COUNT(*) AS c FROM messages WHERE session_id = ?", (session_id,)
+        ).fetchone()["c"]
+    )
+    last = conn.execute(
+        """
+        SELECT task_id FROM messages
+         WHERE session_id = ? AND task_id IS NOT NULL
+         ORDER BY id DESC LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    session.last_task_id = last["task_id"] if last else None
+    return session
+
+
+def list_sessions(limit: int = 50, offset: int = 0) -> list[models.Session]:
+    """列表带消息数与最后一个任务，避免前端再逐条查询。"""
+    rows = connect().execute(
+        """
+        SELECT s.*,
+               (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count,
+               (SELECT m.task_id FROM messages m
+                 WHERE m.session_id = s.id AND m.task_id IS NOT NULL
+                 ORDER BY m.id DESC LIMIT 1) AS last_task_id
+          FROM sessions s
+         ORDER BY s.updated_at DESC, s.rowid DESC
+         LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    ).fetchall()
+    sessions = []
+    for row in rows:
+        session = models.Session.from_row(row)
+        session.message_count = int(row["message_count"])
+        session.last_task_id = row["last_task_id"]
+        sessions.append(session)
+    return sessions
+
+
+def count_sessions() -> int:
+    return int(connect().execute("SELECT COUNT(*) AS c FROM sessions").fetchone()["c"])
+
+
+def add_message(
+    session_id: str,
+    role: str,
+    kind: str,
+    content: str,
+    task_id: str | None = None,
+) -> models.Message:
+    """写一条消息，同时推进会话时间；首个用户消息顺带补会话标题。"""
+    conn = connect()
+    stamp = now()
+    with conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO messages (session_id, role, kind, content, task_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, role, kind, content, task_id, stamp),
+        )
+        conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (stamp, session_id))
+        if role == models.MESSAGE_ROLE_USER:
+            title = " ".join(content.split())[:24]
+            if title:
+                conn.execute(
+                    "UPDATE sessions SET title = ? WHERE id = ? AND title = ''",
+                    (title, session_id),
+                )
+        elif kind == "artifact":
+            # 首条消息常是"做个网页"这种模糊话（正因为它才会触发追问），
+            # 等真正生成了再用这句需求补一个能区分会话的标题
+            title = " ".join(content.split())[:24]
+            if title:
+                conn.execute(
+                    "UPDATE sessions SET title = ? WHERE id = ? AND LENGTH(title) < ?",
+                    (title, session_id, 12),
+                )
+    return models.Message(
+        id=int(cursor.lastrowid),
+        session_id=session_id,
+        role=role,
+        kind=kind,
+        content=content,
+        created_at=stamp,
+        task_id=task_id,
+    )
+
+
+def list_messages(session_id: str, limit: int = 200) -> list[models.Message]:
+    rows = connect().execute(
+        "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+    return [models.Message.from_row(row) for row in rows]
+
+
+def last_generated_task(session_id: str) -> str | None:
+    """会话里最近一次成功产出的任务，作为"继续修改"的父版本。"""
+    row = connect().execute(
+        """
+        SELECT task_id FROM messages
+         WHERE session_id = ? AND kind = ? AND task_id IS NOT NULL
+         ORDER BY id DESC LIMIT 1
+        """,
+        (session_id, "artifact"),
+    ).fetchone()
+    return row["task_id"] if row else None

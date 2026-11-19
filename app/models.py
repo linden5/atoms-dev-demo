@@ -76,6 +76,28 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id, seq)",
+    # ---- 多轮对话：只新增表，不动 tasks / artifacts / task_events ----
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+      id          TEXT PRIMARY KEY,
+      title       TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS messages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  TEXT NOT NULL,
+      role        TEXT NOT NULL,
+      kind        TEXT NOT NULL DEFAULT 'text',
+      content     TEXT NOT NULL,
+      task_id     TEXT,
+      created_at  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id)",
 )
 
 
@@ -150,6 +172,78 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "artifact_count": len(self.artifacts),
+        }
+
+
+# ---------- 多轮对话 ----------
+
+MESSAGE_ROLE_USER = "user"
+MESSAGE_ROLE_ASSISTANT = "assistant"
+
+# text=普通气泡，question=Agent 追问，artifact=生成结果，error=失败提示
+MESSAGE_KINDS = ("text", "question", "artifact", "error")
+
+
+@dataclass
+class Message:
+    id: int
+    session_id: str
+    role: str
+    kind: str
+    content: str
+    created_at: str
+    task_id: str | None = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Message":
+        return cls(
+            id=int(row["id"]),
+            session_id=row["session_id"],
+            role=row["role"],
+            kind=row["kind"],
+            content=row["content"],
+            created_at=row["created_at"],
+            task_id=row["task_id"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "role": self.role,
+            "kind": self.kind,
+            "content": self.content,
+            "task_id": self.task_id,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
+class Session:
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+    last_task_id: str | None = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Session":
+        return cls(
+            id=row["id"],
+            title=row["title"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "message_count": self.message_count,
+            "last_task_id": self.last_task_id,
         }
 
 
