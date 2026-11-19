@@ -48,7 +48,12 @@ if [ -z "$health" ]; then
 fi
 ok "/health 可用"
 step="$(printf '%s' "$health" | grep -o '"step":"[^"]*"' | cut -d'"' -f4)"
-[ "$step" = "s9" ] && ok "step=s9" || no "step=${step:-空}，期望 s9"
+# S10 起步骤继续推进，判定放宽为 >= s9（与 verify_s8 的 >= 8 同款写法）
+step_num="${step#s}"
+case "${step_num}" in
+  '' | *[!0-9]*) no "步骤号无法解析（step=${step:-空}）" ;;
+  *) [ "$step_num" -ge 9 ] && ok "step=${step}（>= s9）" || no "step=${step:-空}，期望 s9 及以后" ;;
+esac
 
 # ---------- 1. 挑一个最近可预览的任务（不重新生成，验收可幂等重跑） ----------
 listing="$(fetch "${BASE_URL}/api/tasks?limit=50")"
